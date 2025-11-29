@@ -14,13 +14,13 @@ function App() {
     <Router>
       <Layout>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Repositories />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/review" element={<Review />} />
           <Route path="/tests" element={<Tests />} />
           <Route path="/predictions" element={<Predictions />} />
           <Route path="/actions" element={<Actions />} />
           <Route path="/issues" element={<Issues />} />
-          <Route path="/repositories" element={<Repositories />} />
           <Route path="/repositories/:id" element={<RepositoryDetails />} />
         </Routes>
       </Layout>

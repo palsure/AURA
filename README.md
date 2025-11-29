@@ -323,6 +323,21 @@ Built with ❤️ for Galuxium Nexus V1 2025
 
 ---
 
+## 🚀 Deployment
+
+Want to host AURA publicly for free? Check out our comprehensive **[Deployment Guide](DEPLOYMENT.md)** which covers:
+
+- **Render** ⭐ (Recommended - Easiest setup with free PostgreSQL)
+- **Railway** (Modern platform with $5/month credit)
+- **Vercel + Railway** (Best performance combination)
+- **Fly.io** (Global edge deployment)
+
+All options include step-by-step instructions, environment variable setup, and production configuration.
+
+**Quick Start**: See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions.
+
+---
+
 <div align="center">
 
 **Made for Galuxium Nexus V1 2025** 🚀

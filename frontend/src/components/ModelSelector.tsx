@@ -47,6 +47,10 @@ export default function ModelSelector({
         setCurrent({ model, provider })
         if (!selectedModel && !selectedProvider) {
           setSelected({ model, provider })
+          // Notify parent component of the default model
+          if (onModelChange) {
+            onModelChange(model, provider)
+          }
         }
       }
     } catch (error) {

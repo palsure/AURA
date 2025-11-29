@@ -70,16 +70,33 @@ class TestGenerator:
         """
         # Use specified model/provider if provided
         if ai_model and ai_provider:
-            if ai_provider.lower() == "openai" and self.openai_client:
+            provider_lower = ai_provider.lower()
+            if provider_lower == "openai":
+                if not self.openai_client:
+                    raise ValueError(f"OpenAI client not initialized. Check OPENAI_API_KEY in environment variables.")
                 try:
-                    return self._ai_generate_tests(code, language, test_type, function_name, ai_model, ai_provider)
-                except:
-                    pass
-            elif ai_provider.lower() == "anthropic" and self.anthropic_client:
+                    print(f"🔍 Using OpenAI model: {ai_model} for test generation")
+                    result = self._ai_generate_tests(code, language, test_type, function_name, ai_model, ai_provider)
+                    print(f"✅ OpenAI test generation successful")
+                    return result
+                except Exception as e:
+                    print(f"❌ OpenAI test generation failed: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
+            elif provider_lower == "anthropic":
+                if not self.anthropic_client:
+                    raise ValueError(f"Anthropic client not initialized. Check ANTHROPIC_API_KEY in environment variables.")
                 try:
-                    return self._ai_generate_tests_claude(code, language, test_type, function_name, ai_model, ai_provider)
-                except:
-                    pass
+                    print(f"🔍 Using Anthropic model: {ai_model} for test generation")
+                    result = self._ai_generate_tests_claude(code, language, test_type, function_name, ai_model, ai_provider)
+                    print(f"✅ Anthropic test generation successful")
+                    return result
+                except Exception as e:
+                    print(f"❌ Anthropic test generation failed: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
         
         # Try preferred provider first
         if self.preferred_provider == "anthropic" and self.anthropic_client:
@@ -101,7 +118,12 @@ class TestGenerator:
                     except:
                         pass
         
-        # Fallback to intelligent mock generation
+        # If model/provider was specified but generation failed, raise error
+        if ai_model and ai_provider:
+            raise ValueError(f"Failed to generate tests with {ai_provider} model {ai_model}. Check API keys and model availability.")
+        
+        # Fallback to intelligent mock generation only if no specific model was requested
+        print("⚠️  No AI model specified or available, using fallback template generation")
         return self._mock_generate_tests(code, language, test_type, function_name)
     
     def _ai_generate_tests(

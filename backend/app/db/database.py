@@ -5,9 +5,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
+# Use database_url property which handles PostgreSQL driver conversion
+database_url = settings.database_url
 engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+    database_url,
+    connect_args={"check_same_thread": False} if "sqlite" in database_url else {},
+    pool_pre_ping=True if "postgresql" in database_url else False  # Reconnect if connection lost
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

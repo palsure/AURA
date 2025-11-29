@@ -12,7 +12,12 @@ import {
   Plus,
   Eye,
   Github,
-  BarChart3
+  BarChart3,
+  Sparkles,
+  Shield,
+  Zap,
+  Code,
+  Lightbulb
 } from 'lucide-react'
 import ModelSelector from '../components/ModelSelector'
 import Toast, { ToastType } from '../components/Toast'
@@ -49,6 +54,13 @@ export default function RepositoryDetails() {
   } | null>(null)
   const [isRefiningTest, setIsRefiningTest] = useState(false)
   const [aiStatus, setAIStatus] = useState<{ openai_available: boolean; anthropic_available: boolean } | null>(null)
+  const [issueTypeFilter, setIssueTypeFilter] = useState<string | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [showLowCoverageOnly, setShowLowCoverageOnly] = useState(false)
+  const [minIssuesFilter, setMinIssuesFilter] = useState<number>(0)
+  const [reviewGenerateTests, setReviewGenerateTests] = useState(true)
+  const [reviewGenerateIssues, setReviewGenerateIssues] = useState(true)
+  const [reviewGeneratePredictions, setReviewGeneratePredictions] = useState(true)
 
   useEffect(() => {
     if (id) {
@@ -56,6 +68,20 @@ export default function RepositoryDetails() {
       loadRepositoryFiles()
     }
     checkAIStatus()
+    // Initialize default model selection
+    const initializeModel = async () => {
+      try {
+        const { getCurrentModel } = await import('../api/client')
+        const currentModel = await getCurrentModel()
+        if (currentModel && !selectedModel) {
+          setSelectedModel(currentModel.id)
+          setSelectedProvider(currentModel.provider)
+        }
+      } catch (error) {
+        console.error('Failed to load current model:', error)
+      }
+    }
+    initializeModel()
   }, [id])
 
   const checkAIStatus = async () => {
@@ -144,15 +170,45 @@ export default function RepositoryDetails() {
     
     setGeneratingTest(filePath)
     try {
+      console.log('🔍 Generating tests with:', {
+        language,
+        ai_model: selectedModel,
+        ai_provider: selectedProvider,
+        code_length: codeToTest.length,
+        file_path: filePath
+      })
+      
+      // Ensure model and provider are set
+      if (!selectedModel || !selectedProvider) {
+        // Try to get default model
+        try {
+          const { getCurrentModel } = await import('../api/client')
+          const currentModel = await getCurrentModel()
+          if (currentModel) {
+            setSelectedModel(currentModel.id)
+            setSelectedProvider(currentModel.provider)
+          }
+        } catch (error) {
+          console.error('Failed to get default model:', error)
+        }
+      }
+      
       const response = await generateTests({
         code: codeToTest,
         language: language,
         test_type: 'unit',
-        ai_model: selectedModel,
-        ai_provider: selectedProvider,
+        ai_model: selectedModel || undefined,
+        ai_provider: selectedProvider || undefined,
         // Don't save immediately - show preview first
         // repository_id: id ? parseInt(id) : undefined,
         // file_path: filePath
+      })
+      
+      console.log('✅ Test generation response:', {
+        has_test_code: !!response.test_code,
+        test_code_length: response.test_code?.length || 0,
+        test_count: response.test_count,
+        coverage: response.coverage_estimate
       })
       
       // Show preview modal instead of saving immediately
@@ -352,7 +408,23 @@ export default function RepositoryDetails() {
     )
   }
 
-  const { repository, statistics, analyses, issues, tests, predictions } = data
+  const { repository, statistics, analyses, issues: issuesFromData, tests, predictions } = data
+  
+  // Ensure issues is always an array
+  const issues = Array.isArray(issuesFromData) ? issuesFromData : []
+  
+  // Debug logging
+  if (issues.length > 0) {
+    console.log(`[RepositoryDetails] Loaded ${issues.length} issues`)
+    console.log(`[RepositoryDetails] Issue types:`, [...new Set(issues.map((i: any) => i.issue_type))])
+  } else {
+    console.log(`[RepositoryDetails] No issues found in data:`, {
+      hasData: !!data,
+      hasIssuesKey: 'issues' in (data || {}),
+      issuesValue: issuesFromData,
+      statistics: statistics?.total_issues
+    })
+  }
 
   // Calculate coverage - only for source files, not test files
   // Coverage is based on how many source files have corresponding test files
@@ -539,18 +611,133 @@ export default function RepositoryDetails() {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold">Code Files</h2>
-                <div className="flex items-center space-x-4">
-                  <span className="text-sm text-slate-400">
-                    {sourceFiles.length} source files
-                  </span>
-                  {testFiles.length > 0 && (
-                    <span className="text-sm text-slate-400">
-                      {testFiles.length} test files
-                    </span>
-                  )}
-                  <span className="text-sm text-slate-400">
-                    Coverage: {totalCoverage.toFixed(1)}%
-                  </span>
+                <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2 text-sm">
+                      <label className="flex items-center space-x-1 text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={reviewGenerateTests}
+                          onChange={(e) => setReviewGenerateTests(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-primary-600 focus:ring-primary-500 focus:ring-offset-slate-800"
+                        />
+                        <span>Test Coverage</span>
+                      </label>
+                      <label className="flex items-center space-x-1 text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={reviewGenerateIssues}
+                          onChange={(e) => setReviewGenerateIssues(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-primary-600 focus:ring-primary-500 focus:ring-offset-slate-800"
+                        />
+                        <span>Issues</span>
+                      </label>
+                      <label className="flex items-center space-x-1 text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={reviewGeneratePredictions}
+                          onChange={(e) => setReviewGeneratePredictions(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-primary-600 focus:ring-primary-500 focus:ring-offset-slate-800"
+                        />
+                        <span>Predictions</span>
+                      </label>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!id) {
+                          console.error('No repository ID')
+                          return
+                        }
+                        if (analyzing) {
+                          console.log('Analysis already in progress')
+                          return
+                        }
+                        try {
+                          setAnalyzing(true)
+                          console.log(`Starting analysis for repository ${id}...`)
+                          setToast({
+                            message: 'Starting repository analysis...',
+                            type: 'info',
+                            isVisible: true
+                          })
+                          
+                          const requestData = {
+                            generate_tests: reviewGenerateTests,
+                            predict_regression: reviewGeneratePredictions,
+                            max_files: 50,
+                            ...(selectedModel && { ai_model: selectedModel }),
+                            ...(selectedProvider && { ai_provider: selectedProvider })
+                          }
+                        console.log('Sending request to:', `/api/v1/review/repository/${id}`, requestData)
+                        
+                        const response = await apiClient.post(`/api/v1/review/repository/${id}`, requestData)
+                        console.log('Repository analysis response:', response.data)
+                        
+                        const issuesFound = response.data?.analysis?.total_issues || 0
+                        const issuesInResponse = response.data?.analysis?.issues || []
+                        console.log(`Found ${issuesFound} issues in review response, ${issuesInResponse.length} in issues array`)
+                        
+                        setToast({
+                          message: `Analysis complete! Found ${issuesFound} issues. Saving and refreshing...`,
+                          type: 'success',
+                          isVisible: true
+                        })
+                        
+                        // Wait longer for backend to save all issues to database
+                        await new Promise(resolve => setTimeout(resolve, 3000))
+                        
+                        // Reload details to get saved issues (this will also get issues from review_result)
+                        await loadRepositoryDetails()
+                        
+                        // Check if issues were loaded (including from review_result)
+                        const detailsResponse = await apiClient.get(`/api/v1/repositories/${id}/details`)
+                        const loadedIssues = detailsResponse.data?.issues || []
+                        console.log(`After reload: ${loadedIssues.length} issues available (from DB + review_result)`)
+                        
+                        // Note: Even if not all are saved to DB, they should be available from review_result
+                        // So we only warn if significantly fewer are available
+                        if (loadedIssues.length < issuesFound * 0.8) {
+                          setToast({
+                            message: `Note: ${issuesFound} issues found, ${loadedIssues.length} available. Some may still be saving.`,
+                            type: 'info',
+                            isVisible: true
+                          })
+                        } else if (loadedIssues.length >= issuesFound) {
+                          setToast({
+                            message: `✅ All ${loadedIssues.length} issues loaded successfully!`,
+                            type: 'success',
+                            isVisible: true
+                          })
+                        }
+                      } catch (err: any) {
+                        console.error('Analysis error:', err)
+                        setToast({
+                          message: err.response?.data?.detail || err.message || 'Failed to analyze repository',
+                          type: 'error',
+                          isVisible: true
+                        })
+                      } finally {
+                        setAnalyzing(false)
+                      }
+                    }}
+                    disabled={analyzing || !id}
+                    className={`flex items-center space-x-2 px-4 py-2 text-white text-sm rounded transition-colors ${
+                      analyzing || !id
+                        ? 'bg-slate-600 cursor-not-allowed opacity-50'
+                        : 'bg-primary-600 hover:bg-primary-700'
+                    }`}
+                  >
+                    {analyzing ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <span>Analyzing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        <span>Review Again</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -559,19 +746,84 @@ export default function RepositoryDetails() {
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-400"></div>
                 </div>
               ) : (
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600 max-h-[600px] overflow-y-auto">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">Files</h3>
-                  <div className="space-y-1">
+                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-slate-300">Files</h3>
+                    <div className="flex items-center space-x-3">
+                      <label className="flex items-center space-x-2 text-sm text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showLowCoverageOnly}
+                          onChange={(e) => setShowLowCoverageOnly(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-primary-600 focus:ring-primary-500 focus:ring-offset-slate-800"
+                        />
+                        <span>Low Coverage Only</span>
+                      </label>
+                      <div className="flex items-center space-x-2">
+                        <label className="text-sm text-slate-400">Min Issues:</label>
+                        <select
+                          value={minIssuesFilter}
+                          onChange={(e) => setMinIssuesFilter(Number(e.target.value))}
+                          className="px-2 py-1 text-sm rounded border border-slate-600 bg-slate-800 text-slate-300 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                        >
+                          <option value={0}>All</option>
+                          <option value={1}>1+</option>
+                          <option value={3}>3+</option>
+                          <option value={5}>5+</option>
+                          <option value={10}>10+</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="max-h-[600px] overflow-y-auto space-y-1">
                     {Object.entries(filesByDir).map(([dir, dirFiles]) => (
                       <div key={dir}>
                         <p className="text-xs text-slate-500 mb-1 mt-2">{dir}</p>
                         {dirFiles.map((file) => {
-                          const fileAnalysis = analyses.find((a: any) => 
-                            a.file_path && file.relative_path.includes(a.file_path.split('/').pop() || '')
-                          )
-                          const fileIssues = issues.filter((i: any) => 
-                            fileAnalysis && i.analysis_id === fileAnalysis.id
-                          )
+                          // Better matching: normalize paths and compare
+                          const normalizePath = (path: string) => path.replace(/\\/g, '/').toLowerCase().trim()
+                          const filePathNormalized = normalizePath(file.relative_path)
+                          const fileName = file.name.toLowerCase()
+                          
+                          // Try to find analysis by exact path match first
+                          let fileAnalysis = analyses.find((a: any) => {
+                            if (!a.file_path) return false
+                            const analysisPath = normalizePath(a.file_path)
+                            // Exact match
+                            if (analysisPath === filePathNormalized) return true
+                            // Match by filename if paths are similar
+                            const analysisFileName = analysisPath.split('/').pop() || ''
+                            if (analysisFileName === fileName) {
+                              // Check if directory structure is similar
+                              const fileDir = filePathNormalized.substring(0, filePathNormalized.lastIndexOf('/'))
+                              const analysisDir = analysisPath.substring(0, analysisPath.lastIndexOf('/'))
+                              return fileDir.includes(analysisDir) || analysisDir.includes(fileDir)
+                            }
+                            return false
+                          })
+                          
+                          // If no exact match, try matching by filename only
+                          if (!fileAnalysis) {
+                            fileAnalysis = analyses.find((a: any) => {
+                              if (!a.file_path) return false
+                              const analysisPath = normalizePath(a.file_path)
+                              const analysisFileName = analysisPath.split('/').pop() || ''
+                              return analysisFileName === fileName
+                            })
+                          }
+                          
+                          // Get issues for this file's analysis
+                          const fileIssues = issues.filter((i: any) => {
+                            if (!fileAnalysis) return false
+                            // Match by analysis_id
+                            if (i.analysis_id && i.analysis_id === fileAnalysis.id) return true
+                            // Also check if issue has file_path info that matches
+                            if (i.file_path) {
+                              const issuePath = normalizePath(i.file_path)
+                              return issuePath === filePathNormalized || issuePath.includes(fileName)
+                            }
+                            return false
+                          })
                           // Check if this source file has corresponding test files
                           const sourceName = file.name.toLowerCase()
                           const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
@@ -600,11 +852,40 @@ export default function RepositoryDetails() {
                           
                           // Coverage: 100% if test files or generated tests exist, 0% otherwise
                           const fileCoverage = (matchingTestFiles.length > 0 || fileTests.length > 0) ? 100 : 0
+                          
+                          // Determine if file needs highlighting
+                          const hasLowCoverage = fileCoverage === 0
+                          const hasIssues = fileIssues.length > 0
+                          const hasCriticalIssues = fileIssues.some((i: any) => i.severity === 'critical')
+                          const hasHighIssues = fileIssues.some((i: any) => i.severity === 'high')
+                          
+                          // Apply filters
+                          if (showLowCoverageOnly && !hasLowCoverage) {
+                            return null
+                          }
+                          if (minIssuesFilter > 0 && fileIssues.length < minIssuesFilter) {
+                            return null
+                          }
+                          
+                          // Highlight styling based on issues and coverage
+                          let highlightClass = ''
+                          if (hasCriticalIssues) {
+                            highlightClass = 'bg-red-500/10 border-l-4 border-red-500'
+                          } else if (hasHighIssues) {
+                            highlightClass = 'bg-orange-500/10 border-l-4 border-orange-500'
+                          } else if (hasIssues && hasLowCoverage) {
+                            highlightClass = 'bg-yellow-500/10 border-l-4 border-yellow-500'
+                          } else if (hasIssues) {
+                            highlightClass = 'bg-yellow-500/5 border-l-2 border-yellow-500/50'
+                          } else if (hasLowCoverage) {
+                            highlightClass = 'bg-blue-500/5 border-l-2 border-blue-500/50'
+                          }
+                          
                           return (
                             <button
                               key={file.path}
                               onClick={() => loadFileContent(file.relative_path)}
-                              className="w-full text-left p-2 rounded hover:bg-slate-600 transition-colors"
+                              className={`w-full text-left p-2 rounded hover:bg-slate-600 transition-colors ${highlightClass}`}
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center space-x-2 flex-1 min-w-0">
@@ -613,14 +894,26 @@ export default function RepositoryDetails() {
                                 </div>
                                 <div className="flex items-center space-x-3 flex-shrink-0">
                                   <div className="flex items-center space-x-1">
-                                    <BarChart3 className="h-3 w-3 text-green-400" />
-                                    <span className="text-xs text-slate-400">
+                                    <BarChart3 className={`h-3 w-3 ${
+                                      fileCoverage === 0 ? 'text-red-400' : fileCoverage < 50 ? 'text-yellow-400' : 'text-green-400'
+                                    }`} />
+                                    <span className={`text-xs font-medium ${
+                                      fileCoverage === 0 ? 'text-red-400' : fileCoverage < 50 ? 'text-yellow-400' : 'text-slate-400'
+                                    }`}>
                                       {fileCoverage > 0 ? `${fileCoverage.toFixed(0)}%` : '0%'}
                                     </span>
                                   </div>
                                   <div className="flex items-center space-x-1">
-                                    <AlertTriangle className="h-3 w-3 text-yellow-400" />
-                                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                    <AlertTriangle className={`h-3 w-3 ${
+                                      fileIssues.length === 0
+                                        ? 'text-green-400'
+                                        : fileIssues.some((i: any) => i.severity === 'critical')
+                                        ? 'text-red-400'
+                                        : fileIssues.some((i: any) => i.severity === 'high')
+                                        ? 'text-orange-400'
+                                        : 'text-yellow-400'
+                                    }`} />
+                                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                                       fileIssues.length === 0
                                         ? 'bg-green-500/20 text-green-400'
                                         : fileIssues.some((i: any) => i.severity === 'critical')
@@ -655,20 +948,6 @@ export default function RepositoryDetails() {
                 }}
               />
 
-              {/* Issues Summary */}
-              {issues.length > 0 && (
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
-                  <h3 className="text-sm font-semibold text-slate-300 mb-3">Issues Summary</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {Object.entries(statistics.issues_by_severity || {}).map(([severity, count]: [string, any]) => (
-                      <div key={severity} className="text-center">
-                        <p className="text-2xl font-bold capitalize">{severity}</p>
-                        <p className="text-sm text-slate-400">{count} issues</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -682,15 +961,6 @@ export default function RepositoryDetails() {
                   <span className="text-sm text-slate-400">
                     Overall Coverage: <span className="font-semibold text-white">{totalCoverage.toFixed(1)}%</span>
                   </span>
-                  <ModelSelector
-                    selectedModel={selectedModel}
-                    selectedProvider={selectedProvider}
-                    onModelChange={(model, provider) => {
-                      setSelectedModel(model)
-                      setSelectedProvider(provider)
-                    }}
-                    compact
-                  />
                 </div>
               </div>
 
@@ -988,63 +1258,284 @@ export default function RepositoryDetails() {
                 </div>
               </div>
 
-              {issues.length === 0 ? (
+              {/* Issue Type Filters */}
+              <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-slate-300">Filter by Issue Type</h3>
+                  <button
+                    onClick={async () => {
+                      if (!id) {
+                        console.error('No repository ID')
+                        return
+                      }
+                      if (analyzing) {
+                        console.log('Analysis already in progress')
+                        return
+                      }
+                      try {
+                        setAnalyzing(true)
+                        console.log(`Starting analysis for repository ${id}...`)
+                        setToast({
+                          message: 'Starting repository analysis...',
+                          type: 'info',
+                          isVisible: true
+                        })
+                        
+                        const requestData = {
+                          generate_tests: true,
+                          predict_regression: true,
+                          max_files: 50,
+                          ...(selectedModel && { ai_model: selectedModel }),
+                          ...(selectedProvider && { ai_provider: selectedProvider })
+                        }
+                        console.log('Sending request to:', `/api/v1/review/repository/${id}`, requestData)
+                        
+                        const response = await apiClient.post(`/api/v1/review/repository/${id}`, requestData)
+                        console.log('Repository analysis response:', response.data)
+                        
+                        const issuesFound = response.data?.analysis?.total_issues || 0
+                        const issuesInResponse = response.data?.analysis?.issues || []
+                        console.log(`Found ${issuesFound} issues in review response, ${issuesInResponse.length} in issues array`)
+                        
+                        setToast({
+                          message: `Analysis complete! Found ${issuesFound} issues. Saving and refreshing...`,
+                          type: 'success',
+                          isVisible: true
+                        })
+                        
+                        // Wait longer for backend to save all issues to database
+                        await new Promise(resolve => setTimeout(resolve, 3000))
+                        
+                        // Reload details to get saved issues (this will also get issues from review_result)
+                        await loadRepositoryDetails()
+                        
+                        // Check if issues were loaded (including from review_result)
+                        const detailsResponse = await apiClient.get(`/api/v1/repositories/${id}/details`)
+                        const loadedIssues = detailsResponse.data?.issues || []
+                        console.log(`After reload: ${loadedIssues.length} issues available (from DB + review_result)`)
+                        
+                        // Note: Even if not all are saved to DB, they should be available from review_result
+                        // So we only warn if significantly fewer are available
+                        if (loadedIssues.length < issuesFound * 0.8) {
+                          setToast({
+                            message: `Note: ${issuesFound} issues found, ${loadedIssues.length} available. Some may still be saving.`,
+                            type: 'info',
+                            isVisible: true
+                          })
+                        } else if (loadedIssues.length >= issuesFound) {
+                          setToast({
+                            message: `✅ All ${loadedIssues.length} issues loaded successfully!`,
+                            type: 'success',
+                            isVisible: true
+                          })
+                        }
+                      } catch (err: any) {
+                        console.error('Analysis error:', err)
+                        setToast({
+                          message: err.response?.data?.detail || err.message || 'Failed to analyze repository',
+                          type: 'error',
+                          isVisible: true
+                        })
+                      } finally {
+                        setAnalyzing(false)
+                      }
+                    }}
+                    disabled={analyzing || !id}
+                    className={`flex items-center space-x-2 px-4 py-2 text-white text-sm rounded transition-colors ${
+                      analyzing || !id
+                        ? 'bg-slate-600 cursor-not-allowed opacity-50'
+                        : 'bg-primary-600 hover:bg-primary-700'
+                    }`}
+                  >
+                    {analyzing ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <span>Analyzing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        <span>Analyze Repository</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {['all', 'security', 'bug', 'performance', 'style', 'best_practice'].map((type) => {
+                    const filterValue = type === 'all' ? null : type.toUpperCase()
+                    const filteredCount = filterValue 
+                      ? issues.filter((i: any) => {
+                          const issueType = (i.issue_type || '').toLowerCase()
+                          return issueType === type || (type === 'best_practice' && (issueType === 'best_practice' || issueType === 'code_improvements'))
+                        }).length
+                      : issues.length
+                    
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setIssueTypeFilter(filterValue)}
+                        className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                          issueTypeFilter === filterValue
+                            ? type === 'security'
+                              ? 'bg-red-500/20 text-red-400 border border-red-500/50'
+                              : type === 'bug'
+                              ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50'
+                              : type === 'performance'
+                              ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/50'
+                              : type === 'style'
+                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50'
+                              : type === 'best_practice'
+                              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50'
+                              : 'bg-primary-600/20 text-primary-400 border border-primary-500/50'
+                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600 border border-slate-600'
+                        }`}
+                      >
+                        {type === 'all' ? 'All Issues' : type === 'best_practice' ? 'Best Practice' : type.charAt(0).toUpperCase() + type.slice(1)}
+                        <span className="ml-2 text-xs opacity-75">({filteredCount})</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Issue Type Statistics */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { type: 'security', label: 'Security', color: 'red', icon: Shield },
+                  { type: 'bug', label: 'Bugs', color: 'orange', icon: AlertTriangle },
+                  { type: 'performance', label: 'Performance', color: 'yellow', icon: Zap },
+                  { type: 'style', label: 'Style', color: 'blue', icon: Code },
+                  { type: 'best_practice', label: 'Best Practice', color: 'purple', icon: Lightbulb }
+                ].map(({ type, label, color, icon: Icon }) => {
+                  const typeIssues = issues.filter((i: any) => {
+                    const issueType = (i.issue_type || '').toLowerCase()
+                    return issueType === type || (type === 'best_practice' && (issueType === 'best_practice' || issueType === 'code_improvements'))
+                  })
+                  const count = typeIssues.length
+                  const criticalCount = typeIssues.filter((i: any) => i.severity === 'critical').length
+                  
+                  return (
+                    <div
+                      key={type}
+                      className={`bg-slate-800/50 rounded-lg p-3 border ${
+                        issueTypeFilter?.toLowerCase() === type 
+                          ? color === 'red' ? 'border-red-500/50' :
+                            color === 'orange' ? 'border-orange-500/50' :
+                            color === 'yellow' ? 'border-yellow-500/50' :
+                            color === 'blue' ? 'border-blue-500/50' :
+                            'border-purple-500/50'
+                          : 'border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2 mb-1">
+                        <Icon className={
+                          color === 'red' ? 'h-4 w-4 text-red-400' :
+                          color === 'orange' ? 'h-4 w-4 text-orange-400' :
+                          color === 'yellow' ? 'h-4 w-4 text-yellow-400' :
+                          color === 'blue' ? 'h-4 w-4 text-blue-400' :
+                          'h-4 w-4 text-purple-400'
+                        } />
+                        <span className="text-xs text-slate-400">{label}</span>
+                      </div>
+                      <p className={
+                        color === 'red' ? 'text-2xl font-bold text-red-400' :
+                        color === 'orange' ? 'text-2xl font-bold text-orange-400' :
+                        color === 'yellow' ? 'text-2xl font-bold text-yellow-400' :
+                        color === 'blue' ? 'text-2xl font-bold text-blue-400' :
+                        'text-2xl font-bold text-purple-400'
+                      }>{count}</p>
+                      {criticalCount > 0 && (
+                        <p className="text-xs text-red-400 mt-1">{criticalCount} critical</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Issues List */}
+              {(() => {
+                const filteredIssues = issueTypeFilter
+                  ? issues.filter((i: any) => {
+                      const issueType = (i.issue_type || '').toLowerCase()
+                      const filterType = issueTypeFilter.toLowerCase()
+                      // Map 'best_practice' to 'code improvements' for filtering
+                      if (filterType === 'best_practice' || filterType === 'code improvements') {
+                        return issueType === 'best_practice' || issueType === 'code_improvements'
+                      }
+                      return issueType === filterType
+                    })
+                  : issues
+                
+                return filteredIssues.length === 0 ? (
                 <div className="bg-slate-700/50 rounded-lg p-8 border border-slate-600 text-center">
                   <CheckCircle className="h-16 w-16 text-green-400 mx-auto mb-4" />
-                  <p className="text-slate-400">No issues found</p>
+                  <p className="text-slate-400">
+                    {issueTypeFilter 
+                      ? `No ${issueTypeFilter.toLowerCase().replace('_', ' ')} issues found`
+                      : 'No issues found'}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {issues.map((issue: any) => (
-                    <div
-                      key={issue.id}
-                      className={`bg-slate-700/50 rounded-lg p-4 border ${
-                        issue.fixed
-                          ? 'border-green-500/50'
-                          : issue.severity === 'critical'
-                          ? 'border-red-500/50'
-                          : issue.severity === 'high'
-                          ? 'border-orange-500/50'
-                          : 'border-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs px-2 py-0.5 rounded bg-slate-600 capitalize">
-                            {issue.issue_type}
-                          </span>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded capitalize ${
-                              issue.severity === 'critical'
-                                ? 'bg-red-500/20 text-red-400'
-                                : issue.severity === 'high'
-                                ? 'bg-orange-500/20 text-orange-400'
-                                : issue.severity === 'medium'
-                                ? 'bg-yellow-500/20 text-yellow-400'
-                                : 'bg-blue-500/20 text-blue-400'
-                            }`}
-                          >
-                            {issue.severity}
-                          </span>
-                          {issue.fixed && (
-                            <CheckCircle className="h-4 w-4 text-green-400" />
+                  {filteredIssues.map((issue: any) => {
+                    const issueTypeColor = issue.issue_type?.toLowerCase() === 'security' ? 'red' :
+                      issue.issue_type?.toLowerCase() === 'bug' ? 'orange' :
+                      issue.issue_type?.toLowerCase() === 'performance' ? 'yellow' :
+                      issue.issue_type?.toLowerCase() === 'style' ? 'blue' :
+                      issue.issue_type?.toLowerCase() === 'best_practice' ? 'purple' : 'slate'
+                    
+                    return (
+                      <div
+                        key={issue.id}
+                        className={`bg-slate-700/50 rounded-lg p-4 border ${
+                          issue.fixed
+                            ? 'border-green-500/50'
+                            : issue.severity === 'critical'
+                            ? 'border-red-500/50'
+                            : issue.severity === 'high'
+                            ? 'border-orange-500/50'
+                            : 'border-slate-600'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center space-x-2 flex-wrap">
+                            <span className={`text-xs px-2 py-0.5 rounded capitalize bg-${issueTypeColor}-500/20 text-${issueTypeColor}-400 border border-${issueTypeColor}-500/50`}>
+                              {issue.issue_type?.replace('_', ' ') || 'unknown'}
+                            </span>
+                            <span
+                              className={`text-xs px-2 py-0.5 rounded capitalize ${
+                                issue.severity === 'critical'
+                                  ? 'bg-red-500/20 text-red-400'
+                                  : issue.severity === 'high'
+                                  ? 'bg-orange-500/20 text-orange-400'
+                                  : issue.severity === 'medium'
+                                  ? 'bg-yellow-500/20 text-yellow-400'
+                                  : 'bg-blue-500/20 text-blue-400'
+                              }`}
+                            >
+                              {issue.severity}
+                            </span>
+                            {issue.fixed && (
+                              <CheckCircle className="h-4 w-4 text-green-400" />
+                            )}
+                          </div>
+                          {issue.line_number && (
+                            <span className="text-xs text-slate-500">Line {issue.line_number}</span>
                           )}
                         </div>
-                        {issue.line_number && (
-                          <span className="text-xs text-slate-500">Line {issue.line_number}</span>
+                        <p className="text-sm text-slate-300 mt-2 mb-2">{issue.message}</p>
+                        {issue.suggestion && (
+                          <div className="mt-2 p-3 bg-slate-800 rounded border border-slate-600">
+                            <p className="text-xs font-semibold text-primary-400 mb-1">💡 Fix Suggestion:</p>
+                            <p className="text-sm text-slate-300">{issue.suggestion}</p>
+                          </div>
                         )}
                       </div>
-                      <p className="text-sm text-slate-300 mt-2 mb-2">{issue.message}</p>
-                      {issue.suggestion && (
-                        <div className="mt-2 p-3 bg-slate-800 rounded border border-slate-600">
-                          <p className="text-xs font-semibold text-primary-400 mb-1">💡 Fix Suggestion:</p>
-                          <p className="text-sm text-slate-300">{issue.suggestion}</p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
-              )}
+              )
+              })()}
             </div>
           )}
 

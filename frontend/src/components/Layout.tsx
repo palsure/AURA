@@ -9,8 +9,8 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
 
   const navItems = [
-    { path: '/repositories', icon: FolderGit, label: 'Repositories' },
-    { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/', icon: FolderGit, label: 'Repositories' },
+    { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   ]
 
   return (

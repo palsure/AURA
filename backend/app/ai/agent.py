@@ -320,8 +320,11 @@ Code:
 
 Provide specific, actionable suggestions in a clear format."""
 
+        # Use provided model or fallback to default
+        model_to_use = model or settings.OPENAI_MODEL
+        
         response = self.openai_client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=model_to_use,
             messages=[
                 {"role": "system", "content": "You are an expert code reviewer and security analyst. Analyze code thoroughly and provide specific, actionable feedback."},
                 {"role": "user", "content": prompt}
@@ -362,8 +365,11 @@ Code:
 
 Provide specific, actionable suggestions in a clear format."""
 
+        # Use provided model or fallback to default
+        model_to_use = model or settings.ANTHROPIC_MODEL
+        
         message = self.anthropic_client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
+            model=model_to_use,
             max_tokens=2000,
             temperature=0.2,
             system="You are an expert code reviewer and security analyst. Analyze code thoroughly and provide specific, actionable feedback.",

@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.db.models import Review, Repository, CodeAnalysis, GeneratedTest, RegressionPrediction, AutomatedAction
+from app.db.models import Review, Repository, CodeAnalysis, GeneratedTest, RegressionPrediction, AutomatedAction, Issue
 from app.ai.agent import CodeMindAgent
 from app.ai.test_generator import TestGenerator
 from app.ai.regression_predictor import RegressionPredictor
@@ -88,6 +88,49 @@ async def unified_review(
         db.add(db_analysis)
         db.commit()
         db.refresh(db_analysis)
+        
+        # Save issues to database
+        issues_to_save = analysis_result.get("issues", [])
+        print(f"🔍 Single file analysis: total_issues={analysis_result.get('total_issues', 0)}, issues_list_length={len(issues_to_save)}")
+        if issues_to_save:
+            print(f"📝 Saving {len(issues_to_save)} issues for analysis {db_analysis.id}")
+            saved_count = 0
+            for issue_dict in issues_to_save:
+                try:
+                    issue_type = issue_dict.get("issue_type", "unknown")
+                    if hasattr(issue_type, 'value'):
+                        issue_type = issue_type.value
+                    
+                    severity = issue_dict.get("severity", "low")
+                    if hasattr(severity, 'value'):
+                        severity = severity.value
+                    
+                    db_issue = Issue(
+                        analysis_id=db_analysis.id,
+                        issue_type=str(issue_type).lower(),
+                        severity=str(severity).lower(),
+                        line_number=issue_dict.get("line_number"),
+                        message=str(issue_dict.get("message", ""))[:500],
+                        suggestion=str(issue_dict.get("suggestion", ""))[:1000],
+                        code_snippet=issue_dict.get("code_snippet")
+                    )
+                    db.add(db_issue)
+                    saved_count += 1
+                except Exception as e:
+                    print(f"❌ Error saving issue: {str(e)}")
+                    print(f"   Issue dict: {issue_dict}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+            if saved_count > 0:
+                db.commit()
+                print(f"✅ Saved {saved_count}/{len(issues_to_save)} issues for analysis {db_analysis.id}")
+            else:
+                db.rollback()
+                print(f"❌ Failed to save any issues")
+        else:
+            print(f"⚠️  No issues to save for analysis {db_analysis.id}")
         
         review.files_reviewed = 1
         review.issues_found = analysis_result["total_issues"]
@@ -326,6 +369,14 @@ async def review_repository(
                     ai_provider=request.ai_provider
                 )
                 
+                # Debug: Check analysis result structure
+                if analysis_result.get("total_issues", 0) > 0:
+                    print(f"🔍 Analysis result for {relative_path}:")
+                    print(f"   total_issues: {analysis_result.get('total_issues')}")
+                    print(f"   issues list length: {len(analysis_result.get('issues', []))}")
+                    if analysis_result.get("issues"):
+                        print(f"   First issue: {analysis_result.get('issues')[0]}")
+                
                 # Save analysis
                 db_analysis = CodeAnalysis(
                     file_path=relative_path,
@@ -337,7 +388,101 @@ async def review_repository(
                 )
                 db.add(db_analysis)
                 db.commit()
+                db.refresh(db_analysis)
                 
+                # Save issues to database
+                issues_to_save = analysis_result.get("issues", [])
+                print(f"🔍 Analysis for {relative_path}: total_issues={analysis_result.get('total_issues', 0)}, issues_list_length={len(issues_to_save)}")
+                if issues_to_save:
+                    print(f"📝 Saving {len(issues_to_save)} issues for analysis {db_analysis.id}")
+                    print(f"   First issue sample: {issues_to_save[0] if issues_to_save else 'N/A'}")
+                    saved_count = 0
+                    failed_count = 0
+                    
+                    # Save issues in smaller batches to avoid losing all on error
+                    batch_size = 10
+                    for batch_start in range(0, len(issues_to_save), batch_size):
+                        batch = issues_to_save[batch_start:batch_start + batch_size]
+                        batch_saved = 0
+                        
+                        for idx, issue_dict in enumerate(batch):
+                            try:
+                                # Handle both dict format and string format for issue_type/severity
+                                issue_type = issue_dict.get("issue_type", "unknown")
+                                if hasattr(issue_type, 'value'):  # If it's an Enum
+                                    issue_type = issue_type.value
+                                
+                                severity = issue_dict.get("severity", "low")
+                                if hasattr(severity, 'value'):  # If it's an Enum
+                                    severity = severity.value
+                                
+                                # Ensure we have valid values
+                                issue_type_str = str(issue_type).lower() if issue_type else "unknown"
+                                severity_str = str(severity).lower() if severity else "low"
+                                
+                                db_issue = Issue(
+                                    analysis_id=db_analysis.id,
+                                    issue_type=issue_type_str,
+                                    severity=severity_str,
+                                    line_number=issue_dict.get("line_number"),
+                                    message=str(issue_dict.get("message", ""))[:500],  # Limit message length
+                                    suggestion=str(issue_dict.get("suggestion", ""))[:1000],  # Limit suggestion length
+                                    code_snippet=issue_dict.get("code_snippet")
+                                )
+                                db.add(db_issue)
+                                batch_saved += 1
+                                
+                            except Exception as issue_err:
+                                print(f"❌ Error preparing issue {batch_start + idx}: {str(issue_err)}")
+                                failed_count += 1
+                                continue
+                        
+                        # Commit this batch
+                        if batch_saved > 0:
+                            try:
+                                db.commit()
+                                saved_count += batch_saved
+                                print(f"   ✅ Committed batch: {batch_saved} issues (total: {saved_count}/{len(issues_to_save)})")
+                            except Exception as commit_err:
+                                print(f"   ❌ Batch commit error: {str(commit_err)}")
+                                db.rollback()
+                                # Try to save each issue individually
+                                for idx, issue_dict in enumerate(batch):
+                                    try:
+                                        issue_type = issue_dict.get("issue_type", "unknown")
+                                        if hasattr(issue_type, 'value'):
+                                            issue_type = issue_type.value
+                                        severity = issue_dict.get("severity", "low")
+                                        if hasattr(severity, 'value'):
+                                            severity = severity.value
+                                        
+                                        db_issue = Issue(
+                                            analysis_id=db_analysis.id,
+                                            issue_type=str(issue_type).lower(),
+                                            severity=str(severity).lower(),
+                                            line_number=issue_dict.get("line_number"),
+                                            message=str(issue_dict.get("message", ""))[:500],
+                                            suggestion=str(issue_dict.get("suggestion", ""))[:1000],
+                                            code_snippet=issue_dict.get("code_snippet")
+                                        )
+                                        db.add(db_issue)
+                                        db.commit()
+                                        saved_count += 1
+                                    except Exception as individual_err:
+                                        print(f"   ❌ Failed to save issue individually: {str(individual_err)}")
+                                        failed_count += 1
+                                        db.rollback()
+                                        continue
+                    
+                    # Final summary (batches already committed)
+                    if saved_count > 0:
+                        print(f"✅ Saved {saved_count}/{len(issues_to_save)} issues for analysis {db_analysis.id} (file: {relative_path})")
+                        if failed_count > 0:
+                            print(f"⚠️  {failed_count} issues failed to save")
+                    else:
+                        print(f"❌ Failed to save any issues for analysis {db_analysis.id} - all {len(issues_to_save)} issues failed to save")
+                else:
+                    print(f"⚠️  No issues to save for analysis {db_analysis.id} (file: {relative_path})")
                 all_issues.extend(analysis_result.get("issues", []))
                 all_analyses.append({
                     "file": relative_path,
@@ -444,12 +589,16 @@ async def review_repository(
         review.files_reviewed = files_reviewed
         review.issues_found = len(all_issues)
         review.status = "completed"
+        # Store full review result including all issues for later retrieval
         review.review_result = {
             "quality_score": avg_quality_score,
             "issues_found": len(all_issues),
-            "files_reviewed": files_reviewed
+            "files_reviewed": files_reviewed,
+            "analysis": aggregated_analysis,  # Include full analysis with all issues
+            "all_issues": all_issues[:500]  # Store up to 500 issues in review_result
         }
         db.commit()
+        print(f"💾 Saved review result with {len(all_issues)} issues to review.review_result")
         
         # Summary
         summary = {

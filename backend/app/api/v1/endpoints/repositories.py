@@ -308,22 +308,145 @@ async def get_repository_details(repo_id: int, db: Session = Depends(get_db)):
     # Get all reviews for this repository to find related analyses
     review_ids = [r.id for r in reviews]
     
-    # Get all code analyses - we'll get them from reviews
-    # Since CodeAnalysis doesn't directly link to Repository, we'll get analyses from file paths
-    # For now, we'll get all analyses and filter by repository path pattern
+    # Get all code analyses - match by repository path or get recent ones
+    # Since CodeAnalysis stores relative paths, we need flexible matching
     analyses = []
     if repo.path:
+        repo_name = os.path.basename(repo.path.rstrip('/'))
+        # Try multiple matching strategies
         analyses = db.query(CodeAnalysis).filter(
-            CodeAnalysis.file_path.like(f"%{repo.path}%")
-        ).order_by(CodeAnalysis.created_at.desc()).limit(50).all()
+            (CodeAnalysis.file_path.like(f"%{repo.path}%")) |
+            (CodeAnalysis.file_path.like(f"%{repo_name}%"))
+        ).order_by(CodeAnalysis.created_at.desc()).limit(100).all()
+        
+        # If no matches by path, get all recent analyses (they're likely from this repo)
+        # This handles the case where file_path is relative (e.g., "frontend/App.tsx")
+        if not analyses:
+            all_recent = db.query(CodeAnalysis).order_by(CodeAnalysis.created_at.desc()).limit(200).all()
+            # Filter to likely matches (relative paths that don't start with /)
+            analyses = [a for a in all_recent if not (a.file_path or "").startswith("/")][:100]
     
     # Get all issues from those analyses
-    analysis_ids = [a.id for a in analyses]
+    analysis_ids = [a.id for a in analyses] if analyses else []
     issues = []
     if analysis_ids:
+        # Get ALL issues, not limited to 100
         issues = db.query(Issue).filter(
             Issue.analysis_id.in_(analysis_ids)
-        ).order_by(Issue.created_at.desc()).limit(100).all()
+        ).order_by(Issue.created_at.desc()).all()
+    
+    # Fallback: Get all recent issues if we have reviews but no matching analyses
+    # This handles cases where file paths don't match but issues exist from recent reviews
+    if not issues and reviews:
+        # Get all recent issues (they might be from this repo's reviews)
+        all_recent_issues = db.query(Issue).order_by(Issue.created_at.desc()).limit(500).all()
+        if all_recent_issues:
+            # Get analyses for these issues
+            issue_analysis_ids = list({i.analysis_id for i in all_recent_issues})
+            issue_analyses = db.query(CodeAnalysis).filter(
+                CodeAnalysis.id.in_(issue_analysis_ids)
+            ).all()
+            # If analyses have relative paths (not absolute), they're likely from this repo
+            relative_analyses = [a for a in issue_analyses if a.file_path and not a.file_path.startswith("/")]
+            if relative_analyses:
+                relative_ids = [a.id for a in relative_analyses]
+                issues = [i for i in all_recent_issues if i.analysis_id in relative_ids]
+    
+    # Also extract issues from the most recent review's review_result JSON
+    # This handles cases where issues are in the review response but not yet saved to Issue table
+    if reviews:
+        most_recent_review = reviews[0]
+        if most_recent_review.review_result:
+            try:
+                review_result = most_recent_review.review_result
+                if isinstance(review_result, dict):
+                    # Try multiple paths: analysis.issues, all_issues, or direct issues
+                    review_issues = []
+                    if "analysis" in review_result:
+                        review_issues = review_result.get("analysis", {}).get("issues", [])
+                    if not review_issues and "all_issues" in review_result:
+                        review_issues = review_result.get("all_issues", [])
+                    if not review_issues and "issues" in review_result:
+                        review_issues = review_result.get("issues", [])
+                    
+                    if review_issues:
+                        print(f"📦 Found {len(review_issues)} issues in review_result JSON")
+                        # Convert JSON issues to Issue-like objects for serialization
+                        # We'll create temporary Issue objects from the JSON data
+                        existing_issue_ids = {i.id for i in issues}
+                        
+                        # Get analyses from the review time window
+                        from datetime import timedelta
+                        review_time = most_recent_review.started_at
+                        time_window_start = review_time - timedelta(minutes=10)
+                        time_window_end = review_time + timedelta(minutes=10)
+                        
+                        review_analyses = db.query(CodeAnalysis).filter(
+                            CodeAnalysis.created_at >= time_window_start,
+                            CodeAnalysis.created_at <= time_window_end
+                        ).all()
+                        
+                        # Try to match JSON issues to database issues by content
+                        # If not found, we'll include them anyway
+                        for json_issue in review_issues:
+                            # Check if this issue already exists in our list
+                            issue_exists = False
+                            for existing_issue in issues:
+                                if (existing_issue.message == json_issue.get("message", "") and
+                                    existing_issue.line_number == json_issue.get("line_number") and
+                                    existing_issue.issue_type == json_issue.get("issue_type", "").lower()):
+                                    issue_exists = True
+                                    break
+                            
+                            if not issue_exists:
+                                # Create a simple dict-like object from JSON (not a SQLAlchemy model)
+                                # We'll use the first matching analysis_id or create a placeholder
+                                analysis_id = None
+                                if review_analyses:
+                                    # Try to find matching analysis by file path if available
+                                    file_path = json_issue.get("file_path")
+                                    if file_path:
+                                        for analysis in review_analyses:
+                                            if file_path in (analysis.file_path or ""):
+                                                analysis_id = analysis.id
+                                                break
+                                    # If no match, use the first analysis
+                                    if not analysis_id:
+                                        analysis_id = review_analyses[0].id
+                                
+                                # Create a simple object with attributes (not a SQLAlchemy model)
+                                class TempIssue:
+                                    def __init__(self, data):
+                                        self.id = data.get('id')
+                                        self.analysis_id = data.get('analysis_id')
+                                        self.issue_type = data.get('issue_type')
+                                        self.severity = data.get('severity')
+                                        self.line_number = data.get('line_number')
+                                        self.message = data.get('message')
+                                        self.suggestion = data.get('suggestion')
+                                        self.code_snippet = data.get('code_snippet')
+                                        self.fixed = data.get('fixed', False)
+                                        self.created_at = data.get('created_at')
+                                
+                                temp_issue = TempIssue({
+                                    'id': len(issues) + 10000,  # Temporary ID to avoid conflicts
+                                    'analysis_id': analysis_id or 0,
+                                    'issue_type': str(json_issue.get("issue_type", "unknown")).lower(),
+                                    'severity': str(json_issue.get("severity", "low")).lower(),
+                                    'line_number': json_issue.get("line_number"),
+                                    'message': str(json_issue.get("message", ""))[:500],
+                                    'suggestion': str(json_issue.get("suggestion", ""))[:1000],
+                                    'code_snippet': json_issue.get("code_snippet"),
+                                    'fixed': False,
+                                    'created_at': review_time
+                                })
+                                issues.append(temp_issue)
+                        
+                        print(f"✅ Merged {len(issues)} total issues (including {len(review_issues)} from review_result)")
+            except Exception as e:
+                print(f"⚠️  Error extracting issues from review_result: {str(e)}")
+                import traceback
+                traceback.print_exc()
     
     # Get all tests from those analyses
     tests = []
@@ -352,11 +475,19 @@ async def get_repository_details(repo_id: int, db: Session = Depends(get_db)):
     if analyses:
         avg_quality_score = sum(a.quality_score for a in analyses if a.quality_score) / len(analyses) if analyses else 0
     
+    # Create a lookup dict for analyses by ID (for adding file_path to issues)
+    analyses_dict = {a.id: {"file_path": a.file_path} for a in analyses}
+    
     issues_by_type = {}
     issues_by_severity = {}
     for issue in issues:
-        issues_by_type[issue.issue_type] = issues_by_type.get(issue.issue_type, 0) + 1
-        issues_by_severity[issue.severity] = issues_by_severity.get(issue.severity, 0) + 1
+        issue_type = issue.issue_type if hasattr(issue, 'issue_type') else getattr(issue, 'issue_type', 'unknown')
+        issue_severity = issue.severity if hasattr(issue, 'severity') else getattr(issue, 'severity', 'low')
+        issues_by_type[issue_type] = issues_by_type.get(issue_type, 0) + 1
+        issues_by_severity[issue_severity] = issues_by_severity.get(issue_severity, 0) + 1
+    
+    # Create a lookup dict for analyses by ID (for adding file_path to issues)
+    analyses_dict = {a.id: {"file_path": a.file_path} for a in analyses}
     
     return {
         "repository": {
@@ -411,14 +542,17 @@ async def get_repository_details(repo_id: int, db: Session = Depends(get_db)):
         ],
         "issues": [
             {
-                "id": i.id,
-                "issue_type": i.issue_type,
-                "severity": i.severity,
-                "line_number": i.line_number,
-                "message": i.message,
-                "suggestion": i.suggestion,
-                "fixed": i.fixed,
-                "created_at": i.created_at
+                "id": i.id if hasattr(i, 'id') and (not hasattr(i, '__dict__') or (hasattr(i, 'id') and i.id < 10000)) else None,
+                "analysis_id": i.analysis_id if hasattr(i, 'analysis_id') else None,
+                "issue_type": i.issue_type if hasattr(i, 'issue_type') else str(getattr(i, 'issue_type', 'unknown')),
+                "severity": i.severity if hasattr(i, 'severity') else str(getattr(i, 'severity', 'low')),
+                "line_number": i.line_number if hasattr(i, 'line_number') else getattr(i, 'line_number', None),
+                "message": i.message if hasattr(i, 'message') else str(getattr(i, 'message', '')),
+                "suggestion": i.suggestion if hasattr(i, 'suggestion') else str(getattr(i, 'suggestion', '')),
+                "code_snippet": getattr(i, 'code_snippet', None),
+                "fixed": getattr(i, 'fixed', False),
+                "file_path": analyses_dict.get(i.analysis_id, {}).get("file_path") if hasattr(i, 'analysis_id') and i.analysis_id else None,
+                "created_at": i.created_at.isoformat() if hasattr(i, 'created_at') and i.created_at else None
             }
             for i in issues
         ],
@@ -499,15 +633,68 @@ async def list_repository_files(
     extension: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """List files in a local repository"""
+    """List files in a repository (local or GitHub)"""
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
     
+    # Handle GitHub repositories
+    if repo.repo_type == "github":
+        try:
+            from app.services.github_service import GitHubService
+            
+            github_service = GitHubService(token=repo.github_token)
+            file_paths = github_service.list_repository_files(
+                repo.github_owner,
+                repo.github_repo,
+                extension=extension
+            )
+            
+            # Convert to same format as local files
+            files = []
+            for file_path in file_paths:
+                file_name = os.path.basename(file_path)
+                file_ext = os.path.splitext(file_name)[1]
+                
+                # Get file info from GitHub API
+                try:
+                    file_info = github_service.get_repository_contents(
+                        repo.github_owner,
+                        repo.github_repo,
+                        file_path
+                    )
+                    # GitHub API returns a single file object when requesting a file path
+                    if isinstance(file_info, dict) and file_info.get("type") == "file":
+                        size = file_info.get("size", 0)
+                    else:
+                        size = 0
+                except:
+                    size = 0
+                
+                files.append({
+                    "path": file_path,
+                    "relative_path": file_path,
+                    "name": file_name,
+                    "size": size,
+                    "extension": file_ext
+                })
+            
+            return {
+                "repository_id": repo_id,
+                "files": files,
+                "total": len(files)
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to list GitHub repository files: {str(e)}"
+            )
+    
+    # Handle local repositories
     if repo.repo_type != "local":
         raise HTTPException(
             status_code=400,
-            detail="Can only list files for local repositories"
+            detail=f"Unsupported repository type: {repo.repo_type}"
         )
     
     if not repo.path or not os.path.exists(repo.path):
@@ -541,17 +728,42 @@ async def get_file_content(
     file_path: str,
     db: Session = Depends(get_db)
 ):
-    """Get content of a file in a local repository"""
+    """Get file content from a repository (local or GitHub)"""
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
     
+    # Handle GitHub repositories
+    if repo.repo_type == "github":
+        try:
+            from app.services.github_service import GitHubService
+            
+            github_service = GitHubService(token=repo.github_token)
+            content = github_service.get_file_content(
+                repo.github_owner,
+                repo.github_repo,
+                file_path
+            )
+            
+            return {
+                "repository_id": repo_id,
+                "file_path": file_path,
+                "content": content
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch file from GitHub: {str(e)}"
+            )
+    
+    # Handle local repositories
     if repo.repo_type != "local":
         raise HTTPException(
             status_code=400,
-            detail="Can only get file content for local repositories"
+            detail=f"Unsupported repository type: {repo.repo_type}"
         )
     
+    # Get content of a file in a local repository
     # Security: Ensure file_path is within repository
     full_path = Path(repo.path) / file_path
     repo_path = Path(repo.path).resolve()

@@ -24,6 +24,25 @@ class GitHubService:
         """Get repository information"""
         url = f"{self.base_url}/repos/{owner}/{repo}"
         response = requests.get(url, headers=self.headers)
+        
+        # Handle rate limit errors with helpful messages
+        if response.status_code == 403:
+            rate_limit_remaining = response.headers.get('X-RateLimit-Remaining', '0')
+            rate_limit_reset = response.headers.get('X-RateLimit-Reset', '0')
+            
+            if 'rate limit' in response.text.lower() or int(rate_limit_remaining) == 0:
+                reset_time = int(rate_limit_reset) if rate_limit_reset else 0
+                error_msg = f"GitHub API rate limit exceeded. "
+                if not self.token:
+                    error_msg += "Please provide a GitHub token to increase your rate limit (5,000 requests/hour vs 60/hour). "
+                else:
+                    error_msg += "Please wait before trying again. "
+                if reset_time:
+                    from datetime import datetime
+                    reset_datetime = datetime.fromtimestamp(reset_time)
+                    error_msg += f"Rate limit resets at {reset_datetime.strftime('%Y-%m-%d %H:%M:%S')}."
+                raise requests.exceptions.HTTPError(error_msg, response=response)
+        
         response.raise_for_status()
         return response.json()
     
@@ -41,6 +60,17 @@ class GitHubService:
             params["ref"] = ref
         
         response = requests.get(url, headers=self.headers, params=params)
+        
+        # Handle rate limit errors
+        if response.status_code == 403:
+            if 'rate limit' in response.text.lower():
+                error_msg = "GitHub API rate limit exceeded. "
+                if not self.token:
+                    error_msg += "Please provide a GitHub token to increase your rate limit."
+                else:
+                    error_msg += "Please wait before trying again."
+                raise requests.exceptions.HTTPError(error_msg, response=response)
+        
         response.raise_for_status()
         return response.json()
     
@@ -58,6 +88,17 @@ class GitHubService:
             params["ref"] = ref
         
         response = requests.get(url, headers=self.headers, params=params)
+        
+        # Handle rate limit errors
+        if response.status_code == 403:
+            if 'rate limit' in response.text.lower():
+                error_msg = "GitHub API rate limit exceeded. "
+                if not self.token:
+                    error_msg += "Please provide a GitHub token to increase your rate limit."
+                else:
+                    error_msg += "Please wait before trying again."
+                raise requests.exceptions.HTTPError(error_msg, response=response)
+        
         response.raise_for_status()
         data = response.json()
         
@@ -70,6 +111,17 @@ class GitHubService:
         """Get repository languages statistics"""
         url = f"{self.base_url}/repos/{owner}/{repo}/languages"
         response = requests.get(url, headers=self.headers)
+        
+        # Handle rate limit errors
+        if response.status_code == 403:
+            if 'rate limit' in response.text.lower():
+                error_msg = "GitHub API rate limit exceeded. "
+                if not self.token:
+                    error_msg += "Please provide a GitHub token to increase your rate limit."
+                else:
+                    error_msg += "Please wait before trying again."
+                raise requests.exceptions.HTTPError(error_msg, response=response)
+        
         response.raise_for_status()
         return response.json()
     

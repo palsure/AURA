@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getRepositories, createRepository, connectGitHubRepository, validateGitHubUrl, deleteRepository, refreshRepositoryFiles, apiClient } from '../api/client'
+import { getRepositories, createRepository, connectGitHubRepository, validateGitHubUrl, deleteRepository, refreshRepositoryFiles, listRepositoryFiles, apiClient } from '../api/client'
 import { FolderGit, Plus, Trash2, Github, CheckCircle, XCircle, FolderOpen, RefreshCw, Sparkles, ArrowLeft, BarChart3, AlertTriangle } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 import Toast, { ToastType } from '../components/Toast'
@@ -47,6 +47,11 @@ export default function Repositories() {
     loadRepositories()
   }, [])
 
+  // Force re-render when stats change
+  useEffect(() => {
+    // This ensures the UI updates when stats are loaded
+  }, [repoStats])
+
   const loadRepositories = async () => {
     try {
       const data = await getRepositories()
@@ -58,12 +63,121 @@ export default function Repositories() {
         try {
           const details = await apiClient.get(`/api/v1/repositories/${repo.id}/details`)
           const statsData = details.data.statistics
-          const totalCoverage = details.data.tests.length > 0
-            ? details.data.tests.reduce((sum: number, t: any) => sum + (t.coverage_percentage || 0), 0) / details.data.tests.length
+          const analyses = details.data.analyses || []
+          const tests = details.data.tests || []
+          
+          // Use same coverage calculation as RepositoryDetails
+          // Fetch files from repository
+          let files: any[] = []
+          try {
+            const filesResponse = await listRepositoryFiles(repo.id)
+            // Handle both array response and object with data property
+            files = Array.isArray(filesResponse) ? filesResponse : (filesResponse?.data || filesResponse?.files || [])
+            if (!Array.isArray(files)) {
+              console.warn(`Files response is not an array for repo ${repo.id}:`, filesResponse)
+              files = []
+            }
+          } catch (fileErr) {
+            console.warn(`Failed to load files for repo ${repo.id}:`, fileErr)
+            files = []
+          }
+          
+          // Helper to identify test files (same as RepositoryDetails)
+          const isTestFile = (filePath: string, fileName: string): boolean => {
+            const lowerPath = filePath.toLowerCase()
+            const lowerName = fileName.toLowerCase()
+            const testPatterns = [
+              'test_', '_test', '.test.', '.spec.', 'tests/', 'test/', '__test__',
+              'test/', 'spec/', 'tests/', 'test/', '__tests__'
+            ]
+            return testPatterns.some(pattern => 
+              lowerPath.includes(pattern) || lowerName.includes(pattern)
+            )
+          }
+          
+          // Filter for code files only
+          const allCodeFiles = files.filter((f: any) => {
+            const ext = f.extension?.toLowerCase() || ''
+            return ['.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.h', '.cs', '.go', '.rs', '.rb', '.php'].includes(ext)
+          })
+          
+          // Separate source files and test files
+          const sourceFiles = allCodeFiles.filter((f: any) => !isTestFile(f.relative_path, f.name))
+          const testFiles = allCodeFiles.filter((f: any) => isTestFile(f.relative_path, f.name))
+          
+          // Match test files to source files (same logic as RepositoryDetails)
+          const sourceFilesWithTests = new Set<string>()
+          
+          testFiles.forEach((testFile: any) => {
+            const testName = testFile.name.toLowerCase()
+            const testPath = testFile.relative_path.toLowerCase()
+            
+            // Extract potential source file name from test file
+            let potentialSourceName = testName
+              .replace(/^test_/, '')
+              .replace(/_test\./, '.')
+              .replace(/\.test\./, '.')
+              .replace(/\.spec\./, '.')
+            
+            // Find matching source file
+            const matchingSource = sourceFiles.find((sourceFile: any) => {
+              const sourceName = sourceFile.name.toLowerCase()
+              const sourcePath = sourceFile.relative_path.toLowerCase()
+              
+              if (sourceName === potentialSourceName) return true
+              
+              const testDir = testPath.substring(0, testPath.lastIndexOf('/'))
+              const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf('/'))
+              
+              if (testDir === sourceDir || testDir.includes('test') || testDir.includes('tests')) {
+                const baseTestName = testName.replace(/^(test_|_test|\.test|\.spec)/, '').replace(/\.(py|js|ts|java)$/, '')
+                const baseSourceName = sourceName.replace(/\.(py|js|ts|java)$/, '')
+                if (baseTestName === baseSourceName) return true
+              }
+              
+              return false
+            })
+            
+            if (matchingSource) {
+              sourceFilesWithTests.add(matchingSource.relative_path)
+            }
+          })
+          
+          // Also check for generated tests in database
+          tests.forEach((test: any) => {
+            const testAnalysis = analyses.find((a: any) => a.id === test.analysis_id)
+            if (testAnalysis && testAnalysis.file_path) {
+              const analysisPath = testAnalysis.file_path.toLowerCase()
+              const sourceFile = sourceFiles.find((f: any) => {
+                const filePath = f.relative_path.toLowerCase()
+                const fileName = f.name.toLowerCase()
+                return analysisPath.includes(fileName) || filePath === analysisPath
+              })
+              if (sourceFile) {
+                sourceFilesWithTests.add(sourceFile.relative_path)
+              }
+            }
+          })
+          
+          // Calculate coverage: percentage of source files that have tests
+          const totalCoverage = sourceFiles.length > 0
+            ? (sourceFilesWithTests.size / sourceFiles.length) * 100
             : 0
+          
+          // Debug logging
+          console.log(`[Coverage] Repo ${repo.id} (${repo.name}):`, {
+            totalFiles: files.length,
+            sourceFiles: sourceFiles.length,
+            testFiles: testFiles.length,
+            filesWithTests: sourceFilesWithTests.size,
+            coverage: totalCoverage.toFixed(1) + '%',
+            analyses: analyses.length,
+            tests: tests.length
+          })
+          
           stats[repo.id] = {
             issues: statsData.total_issues || 0,
-            coverage: totalCoverage
+            coverage: Math.round(totalCoverage * 10) / 10 // Round to 1 decimal place, keep as number
           }
         } catch (err) {
           // If details fail, set defaults
@@ -395,21 +509,7 @@ export default function Repositories() {
                   Cancel
                 </button>
               </>
-            ) : (
-              <div>
-                <button
-                  onClick={() => {
-                    setRepositoryType(null)
-                    setShowAddForm(false)
-                    setShowGitHubForm(false)
-                  }}
-                  className="mb-4 flex items-center space-x-2 text-slate-400 hover:text-white transition-colors"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  <span>Back</span>
-                </button>
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}
@@ -587,14 +687,14 @@ export default function Repositories() {
                 </button>
               </div>
               {validationResult && (
-                <div className={`mt-2 p-3 rounded flex items-center space-x-2 ${
+                <div className={`mt-2 p-3 rounded flex items-start space-x-2 ${
                   validationResult.valid
                     ? 'bg-green-500/10 border border-green-500/50'
                     : 'bg-red-500/10 border border-red-500/50'
                 }`}>
                   {validationResult.valid ? (
                     <>
-                      <CheckCircle className="h-5 w-5 text-green-400" />
+                      <CheckCircle className="h-5 w-5 text-green-400 mt-0.5" />
                       <div className="flex-1">
                         <p className="text-sm text-green-400 font-semibold">Repository found!</p>
                         <p className="text-xs text-slate-400">{validationResult.name}</p>
@@ -602,8 +702,18 @@ export default function Repositories() {
                     </>
                   ) : (
                     <>
-                      <XCircle className="h-5 w-5 text-red-400" />
-                      <p className="text-sm text-red-400">{validationResult.error || 'Invalid repository'}</p>
+                      <XCircle className="h-5 w-5 text-red-400 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm text-red-400 font-semibold mb-1">Validation Failed</p>
+                        <p className="text-xs text-red-300 whitespace-pre-line">{validationResult.error || 'Invalid repository'}</p>
+                        {validationResult.error && validationResult.error.toLowerCase().includes('rate limit') && (
+                          <div className="mt-2 p-2 bg-slate-700/50 rounded text-xs text-slate-300">
+                            <p className="font-semibold mb-1">💡 Tip:</p>
+                            <p>Create a GitHub token at: <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:underline">github.com/settings/tokens</a></p>
+                            <p className="mt-1">No special permissions needed for public repos. This increases your rate limit from 60 to 5,000 requests/hour.</p>
+                          </div>
+                        )}
+                      </div>
                     </>
                   )}
                 </div>

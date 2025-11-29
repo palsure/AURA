@@ -125,6 +125,15 @@ async def generate_tests(
     If repository_id and file_path are provided, the test file will be saved to the repository.
     """
     try:
+        # Log the request details
+        print(f"🔍 Test generation request:")
+        print(f"   Language: {request.language}")
+        print(f"   Test type: {request.test_type}")
+        print(f"   AI Model: {request.ai_model}")
+        print(f"   AI Provider: {request.ai_provider}")
+        print(f"   Code length: {len(request.code)} chars")
+        print(f"   Code preview: {request.code[:200]}...")
+        
         # Generate tests with optional model selection
         result = test_generator.generate_tests(
             request.code,
@@ -134,6 +143,11 @@ async def generate_tests(
             ai_model=request.ai_model,
             ai_provider=request.ai_provider
         )
+        
+        print(f"✅ Test generation successful:")
+        print(f"   Test code length: {len(result.get('test_code', ''))} chars")
+        print(f"   Test count: {result.get('test_count', 0)}")
+        print(f"   Coverage estimate: {result.get('coverage_estimate', 0)}%")
         
         # Save test file to repository if repository_id and file_path are provided
         test_file_path = None

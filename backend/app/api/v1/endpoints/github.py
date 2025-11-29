@@ -199,7 +199,7 @@ async def validate_github_url(
     github_token: Optional[str] = None
 ):
     """Validate GitHub URL and access"""
-    """Validate GitHub URL and access"""
+    import requests
     try:
         github_service = GitHubService(token=github_token)
         repo_info = github_service.parse_github_url(github_url)
@@ -228,14 +228,41 @@ async def validate_github_url(
                 "valid": False,
                 "error": "Repository not found or access denied"
             }
+    except requests.exceptions.HTTPError as e:
+        if e.response and e.response.status_code == 403:
+            error_message = str(e)
+            if "rate limit" in error_message.lower():
+                return {
+                    "valid": False,
+                    "error": "GitHub API rate limit exceeded. Please provide a GitHub token (Settings → Developer settings → Personal access tokens) to increase your rate limit from 60 to 5,000 requests per hour. Or wait a few minutes and try again."
+                }
+            return {
+                "valid": False,
+                "error": f"Access denied: {error_message}. Please check your GitHub token permissions."
+            }
+        elif e.response and e.response.status_code == 404:
+            return {
+                "valid": False,
+                "error": "Repository not found. Please check the URL and ensure the repository exists and is accessible."
+            }
+        return {
+            "valid": False,
+            "error": f"Validation failed: {str(e)}"
+        }
     except ValueError as e:
         return {
             "valid": False,
             "error": str(e)
         }
     except Exception as e:
+        error_message = str(e)
+        if "rate limit" in error_message.lower():
+            return {
+                "valid": False,
+                "error": "GitHub API rate limit exceeded. Please provide a GitHub token to increase your rate limit, or wait a few minutes and try again."
+            }
         return {
             "valid": False,
-            "error": f"Validation failed: {str(e)}"
+            "error": f"Validation failed: {error_message}"
         }
 
