@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react'
+import { TrendingUp, CheckCircle } from 'lucide-react'
 import { apiClient } from '../api/client'
 
 const EXAMPLE_CODE = `def process_data(data):
