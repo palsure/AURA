@@ -14,14 +14,19 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
+      setLoading(true)
       const [statsData, trendsData] = await Promise.all([
         getDashboardStats(),
         getQualityTrends(30),
       ])
+      console.log('Dashboard stats loaded:', statsData)
       setStats(statsData)
       setTrends(trendsData)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load dashboard data:', error)
+      console.error('Error details:', error.response?.data || error.message)
+      // Set empty stats to show error state
+      setStats(null)
     } finally {
       setLoading(false)
     }
@@ -38,7 +43,13 @@ export default function Dashboard() {
   if (!stats) {
     return (
       <div className="text-center py-12">
-        <p className="text-slate-400">No data available. Start analyzing code to see insights!</p>
+        <p className="text-slate-400 mb-4">No data available. Start analyzing code to see insights!</p>
+        <button
+          onClick={loadData}
+          className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded transition-colors"
+        >
+          Retry Loading
+        </button>
       </div>
     )
   }
@@ -88,10 +99,15 @@ export default function Dashboard() {
     },
   ]
 
-  const issuesByTypeData = Object.entries(stats.issues_by_type || {}).map(([type, count]) => ({
-    type: type.charAt(0).toUpperCase() + type.slice(1),
-    count,
-  }))
+  // Process issues by type data, handling empty or null values
+  const issuesByTypeData = stats.issues_by_type && typeof stats.issues_by_type === 'object'
+    ? Object.entries(stats.issues_by_type)
+        .filter(([type, count]) => type && count > 0) // Filter out null/empty types and zero counts
+        .map(([type, count]) => ({
+          type: type.charAt(0).toUpperCase() + type.slice(1).replace(/_/g, ' '),
+          count: Number(count) || 0,
+        }))
+    : []
 
   return (
     <div className="space-y-6">

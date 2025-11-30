@@ -4,8 +4,6 @@ pydantic>=2.10.0
 pydantic-settings>=2.6.0
 sqlalchemy>=2.0.25
 python-multipart==0.0.6
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
 aiofiles==23.2.1
 websockets==12.0
@@ -18,7 +16,6 @@ ast-comments==1.1.2
 astunparse==1.6.3
 pygments==2.17.2
 requests==2.31.0
-redis==5.0.1
 psycopg[binary]>=3.1.0
 alembic==1.12.1
 

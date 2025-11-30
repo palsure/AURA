@@ -5,7 +5,7 @@ Main Application Entry Point
 
 import logging
 import sys
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn

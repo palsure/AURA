@@ -9,9 +9,6 @@ class Settings(BaseSettings):
     
     # API Configuration
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str = "dev-secret-key-change-in-production"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # Database
     DATABASE_URL: str = "sqlite:///./codemind.db"
@@ -19,9 +16,6 @@ class Settings(BaseSettings):
     # For production PostgreSQL, the DATABASE_URL will be provided by the hosting platform
     # Format: postgresql://user:password@host:port/dbname
     # SQLAlchemy needs: postgresql+psycopg://user:password@host:port/dbname (psycopg3)
-    
-    # Redis
-    REDIS_URL: str = "redis://localhost:6379"
     
     # AI Services
     OPENAI_API_KEY: str = ""
@@ -60,10 +54,6 @@ class Settings(BaseSettings):
             url = url.replace("postgresql://", "postgresql+psycopg://", 1)
         
         return url
-    
-    # File Storage
-    UPLOAD_DIR: str = "./uploads"
-    MAX_FILE_SIZE: int = 10485760  # 10MB
     
     @property
     def cors_origins(self) -> List[str]:

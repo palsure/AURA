@@ -40,7 +40,7 @@ class GenerateTestResponse(BaseModel):
     test_count: int
 
 
-def get_test_file_path(source_file_path: str, language: str, repo_path: str) -> str:
+def get_test_file_path(source_file_path: str, language: str, repo_path: str, test_type: str = "unit") -> str:
     """Determine the test file path based on source file path and language"""
     repo_path_obj = Path(repo_path)
     
@@ -57,18 +57,22 @@ def get_test_file_path(source_file_path: str, language: str, repo_path: str) -> 
     source_ext = source_path.suffix  # .py, .js, etc.
     source_dir = source_path.parent
     
-    # Determine test file naming convention based on language
+    # Determine test file naming convention based on language and test type
+    test_suffix = "_e2e" if test_type.lower() == "e2e" else ""
+    
     if language.lower() in ["python", "py"]:
-        # Python: test_*.py
-        test_name = f"test_{source_name}.py"
+        # Python: test_*.py or test_*_e2e.py for E2E
+        test_name = f"test_{source_name}{test_suffix}.py"
         # Try tests/ directory in same location, or same directory
         test_dir = source_dir / "tests"
         # If tests directory doesn't exist, use same directory
         if not (repo_path_obj / test_dir).exists():
             test_dir = source_dir
     elif language.lower() in ["javascript", "typescript", "js", "ts"]:
-        # JavaScript/TypeScript: *.test.js, *.test.ts
+        # JavaScript/TypeScript: *.test.js, *.test.ts or *.e2e.test.js for E2E
         ext = ".test.js" if language.lower() in ["javascript", "js"] else ".test.ts"
+        if test_type.lower() == "e2e":
+            ext = ".e2e.test.js" if language.lower() in ["javascript", "js"] else ".e2e.test.ts"
         test_name = f"{source_name}{ext}"
         # Try __tests__ directory, or same directory
         test_dir = source_dir / "__tests__"
@@ -166,7 +170,8 @@ async def generate_tests(
                     test_file_path = get_test_file_path(
                         str(source_file_path.relative_to(repo_path_obj)),
                         request.language,
-                        repo.path
+                        repo.path,
+                        request.test_type or "unit"
                     )
                     
                     # Create full path
@@ -186,9 +191,36 @@ async def generate_tests(
                     traceback.print_exc()
                     # Continue even if file save fails
         
+        # Create or find CodeAnalysis if repository_id and file_path are provided
+        analysis_id = request.analysis_id
+        if not analysis_id and request.repository_id and request.file_path:
+            # Try to find existing analysis for this file
+            repo = db.query(Repository).filter(Repository.id == request.repository_id).first()
+            if repo:
+                existing_analysis = db.query(CodeAnalysis).filter(
+                    CodeAnalysis.file_path.like(f"%{request.file_path}%")
+                ).order_by(CodeAnalysis.created_at.desc()).first()
+                
+                if existing_analysis:
+                    analysis_id = existing_analysis.id
+                else:
+                    # Create a new analysis for this file
+                    new_analysis = CodeAnalysis(
+                        file_path=request.file_path,
+                        language=request.language,
+                        code_content="",  # We don't have the full source code here
+                        analysis_result={},
+                        issues_found=0,
+                        quality_score=100
+                    )
+                    db.add(new_analysis)
+                    db.commit()
+                    db.refresh(new_analysis)
+                    analysis_id = new_analysis.id
+        
         # Save to database
         db_test = GeneratedTest(
-            analysis_id=request.analysis_id,
+            analysis_id=analysis_id,
             test_type=request.test_type,
             test_code=result["test_code"],
             test_language=request.language,

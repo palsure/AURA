@@ -56,7 +56,18 @@ frontend/.vite/
 
 # Uploads
 uploads/
+
+# Logs
 *.log
+backend.log
+
+# Process IDs
+*.pid
+backend.pid
+
+# Temporary files
+~$*
+*.tmp
 
 # OS
 .DS_Store

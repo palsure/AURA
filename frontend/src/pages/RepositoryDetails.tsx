@@ -66,6 +66,9 @@ export default function RepositoryDetails() {
   const [testCoverageTab, setTestCoverageTab] = useState<'unit' | 'e2e'>('unit')
   const [coverageViewTab, setCoverageViewTab] = useState<'covered' | 'needs'>('covered')
   const [viewingTest, setViewingTest] = useState<any>(null)
+  const [viewingTestFile, setViewingTestFile] = useState<{ name: string; path: string } | null>(null)
+  const [testFileContent, setTestFileContent] = useState<string | null>(null)
+  const [loadingTestFileContent, setLoadingTestFileContent] = useState(false)
 
   // Helper function to count test methods/cases in test code
   const countTestMethods = (testCode: string): number => {
@@ -183,6 +186,32 @@ export default function RepositoryDetails() {
     } finally {
       setLoadingFileContent(false)
     }
+  }
+
+  const loadTestFileContent = async (filePath: string) => {
+    if (!id) return
+    try {
+      setLoadingTestFileContent(true)
+      const response = await apiClient.get(`/api/v1/repositories/${id}/file-content`, {
+        params: { file_path: filePath }
+      })
+      setTestFileContent(response.data.content)
+    } catch (err: any) {
+      setToast({
+        message: err.response?.data?.detail || 'Failed to load test file content',
+        type: 'error',
+        isVisible: true
+      })
+      setTestFileContent(null)
+    } finally {
+      setLoadingTestFileContent(false)
+    }
+  }
+
+  const handleViewTestFile = (testFile: any) => {
+    const filePath = testFile.relative_path || testFile.path || testFile.name
+    setViewingTestFile({ name: testFile.name, path: filePath })
+    loadTestFileContent(filePath)
   }
 
   const handleGenerateTest = async (filePath: string, language: string, code?: string, testType: 'unit' | 'e2e' | 'acceptance' = 'unit') => {
@@ -328,8 +357,15 @@ export default function RepositoryDetails() {
       
       // Close preview and reload
       setPreviewTest(null)
-      await loadRepositoryDetails()
-      await loadRepositoryFiles()
+      
+      // Small delay to ensure file system is updated
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // Reload both repository details and files to get updated coverage
+      await Promise.all([
+        loadRepositoryDetails(),
+        loadRepositoryFiles()
+      ])
     } catch (err: any) {
       setToast({
         message: err.response?.data?.detail || 'Failed to save test',
@@ -487,11 +523,11 @@ export default function RepositoryDetails() {
   }
 
   // Calculate coverage - only for source files, not test files
-  // Coverage is based on how many source files have corresponding test files
+  // Coverage is based on how many source files have corresponding test files (unit OR E2E)
   const sourceFilesWithTests = new Set<string>()
   
-  // Match test files to source files
-  testFiles.forEach(testFile => {
+  // Helper function to match test file to source file
+  const matchTestFileToSource = (testFile: any): string | null => {
     const testName = testFile.name.toLowerCase()
     const testPath = testFile.relative_path.toLowerCase()
     
@@ -502,6 +538,8 @@ export default function RepositoryDetails() {
       .replace(/_test\./, '.')
       .replace(/\.test\./, '.')
       .replace(/\.spec\./, '.')
+      .replace(/e2e\./, '.')
+      .replace(/\.e2e\./, '.')
     
     // Find matching source file
     const matchingSource = sourceFiles.find(sourceFile => {
@@ -518,37 +556,82 @@ export default function RepositoryDetails() {
       // Check common patterns
       if (testDir === sourceDir || testDir.includes('test') || testDir.includes('tests')) {
         // Remove test prefix/suffix and compare
-        const baseTestName = testName.replace(/^(test_|_test|\.test|\.spec)/, '').replace(/\.(py|js|ts|java)$/, '')
+        const baseTestName = testName.replace(/^(test_|_test|\.test|\.spec|e2e|\.e2e)/, '').replace(/\.(py|js|ts|java)$/, '')
         const baseSourceName = sourceName.replace(/\.(py|js|ts|java)$/, '')
         if (baseTestName === baseSourceName) return true
       }
       
+      // Also check if paths are similar
+      if (testPath.includes(sourceName.replace(/\.(py|js|ts|java)$/, ''))) return true
+      if (sourcePath.includes(testName.replace(/^(test_|_test|\.test|\.spec|e2e|\.e2e)/, '').replace(/\.(py|js|ts|java)$/, ''))) return true
+      
       return false
     })
     
-    if (matchingSource) {
-      sourceFilesWithTests.add(matchingSource.relative_path)
+    return matchingSource ? matchingSource.relative_path : null
+  }
+  
+  // Match test files to source files (both unit and E2E)
+  testFiles.forEach(testFile => {
+    const matchedPath = matchTestFileToSource(testFile)
+    if (matchedPath) {
+      sourceFilesWithTests.add(matchedPath)
     }
   })
   
-  // Also check for generated tests in database
+  // Also check for generated tests in database (both unit and E2E)
   tests.forEach((test: any) => {
-    const testAnalysis = analyses.find((a: any) => a.id === test.analysis_id)
-    if (testAnalysis && testAnalysis.file_path) {
-      // Find source file that matches the test's target
-      const analysisPath = testAnalysis.file_path.toLowerCase()
-      const sourceFile = sourceFiles.find(f => {
-        const filePath = f.relative_path.toLowerCase()
-        const fileName = f.name.toLowerCase()
-        return analysisPath.includes(fileName) || filePath === analysisPath
-      })
-      if (sourceFile) {
-        sourceFilesWithTests.add(sourceFile.relative_path)
+    let matchedSourceFile = null
+    
+    // First, try to match via analysis_id
+    if (test.analysis_id) {
+      const testAnalysis = analyses.find((a: any) => a.id === test.analysis_id)
+      if (testAnalysis && testAnalysis.file_path) {
+        // Find source file that matches the test's target
+        const analysisPath = testAnalysis.file_path.toLowerCase()
+        matchedSourceFile = sourceFiles.find(f => {
+          const filePath = f.relative_path.toLowerCase()
+          const fileName = f.name.toLowerCase()
+          // More flexible matching - check if paths overlap
+          return analysisPath.includes(fileName) || 
+                 filePath === analysisPath || 
+                 analysisPath.includes(filePath) || 
+                 filePath.includes(analysisPath) ||
+                 fileName === analysisPath.split('/').pop() ||
+                 filePath.split('/').pop() === analysisPath.split('/').pop()
+        })
       }
     }
+    
+    // If no match via analysis_id, try to match by test file path (for saved test files)
+    // This handles cases where test was saved to file system but analysis_id wasn't set
+    if (!matchedSourceFile && test.test_file_path) {
+      const testFilePath = test.test_file_path.toLowerCase()
+      // Try to extract source file name from test file path
+      const testFileName = testFilePath.split('/').pop() || ''
+      const potentialSourceName = testFileName
+        .replace(/^test_/, '')
+        .replace(/_test\./, '.')
+        .replace(/\.test\./, '.')
+        .replace(/\.spec\./, '.')
+        .replace(/e2e\./, '.')
+        .replace(/\.e2e\./, '.')
+      
+      matchedSourceFile = sourceFiles.find(f => {
+        const fileName = f.name.toLowerCase()
+        const filePath = f.relative_path.toLowerCase()
+        return fileName === potentialSourceName || 
+               testFilePath.includes(fileName) ||
+               filePath.includes(potentialSourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, ''))
+      })
+    }
+    
+    if (matchedSourceFile) {
+      sourceFilesWithTests.add(matchedSourceFile.relative_path)
+    }
   })
   
-  // Calculate coverage: percentage of source files that have tests
+  // Calculate overall coverage: percentage of source files that have ANY tests (unit OR E2E)
   const totalCoverage = sourceFiles.length > 0
     ? (sourceFilesWithTests.size / sourceFiles.length) * 100
     : 0
@@ -1255,7 +1338,16 @@ export default function RepositoryDetails() {
                                     <p className="text-xs text-slate-400">{testFile.relative_path || testFile.name}</p>
                                   </div>
                                 </div>
-                                <span className="text-xs text-slate-400">Test File</span>
+                                <div className="flex items-center space-x-4">
+                                  <span className="text-xs text-slate-400">Test File</span>
+                                  <button
+                                    onClick={() => handleViewTestFile(testFile)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 flex items-center space-x-1 transition-colors"
+                                  >
+                                    <Eye className="h-3 w-3" />
+                                    <span>View Code</span>
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -2333,6 +2425,20 @@ export default function RepositoryDetails() {
           onDismiss={handleDismissTest}
           onRefine={handleRefineTest}
           isRefining={isRefiningTest}
+        />
+      )}
+
+      {/* Test File Viewer Modal */}
+      {viewingTestFile && (
+        <FileViewerModal
+          isOpen={true}
+          fileName={viewingTestFile.name}
+          fileContent={testFileContent}
+          loading={loadingTestFileContent}
+          onClose={() => {
+            setViewingTestFile(null)
+            setTestFileContent(null)
+          }}
         />
       )}
 

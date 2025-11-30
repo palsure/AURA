@@ -66,18 +66,48 @@ async def analyze_code(
         db.refresh(db_analysis)
         
         # Save individual issues
-        for issue_data in analysis_result["issues"]:
-            db_issue = Issue(
-                analysis_id=db_analysis.id,
-                issue_type=issue_data["issue_type"],
-                severity=issue_data["severity"],
-                line_number=issue_data["line_number"],
-                message=issue_data["message"],
-                suggestion=issue_data["suggestion"]
-            )
-            db.add(db_issue)
-        
-        db.commit()
+        issues_to_save = analysis_result.get("issues", [])
+        if issues_to_save:
+            saved_count = 0
+            for issue_data in issues_to_save:
+                try:
+                    issue_type = issue_data.get("issue_type", "unknown")
+                    if hasattr(issue_type, 'value'):
+                        issue_type = issue_type.value
+                    issue_type = str(issue_type).lower().strip() if issue_type else "unknown"
+                    
+                    severity = issue_data.get("severity", "low")
+                    if hasattr(severity, 'value'):
+                        severity = severity.value
+                    severity = str(severity).lower().strip() if severity else "low"
+                    
+                    db_issue = Issue(
+                        analysis_id=db_analysis.id,
+                        issue_type=issue_type,
+                        severity=severity,
+                        line_number=issue_data.get("line_number"),
+                        message=str(issue_data.get("message", ""))[:500],
+                        suggestion=str(issue_data.get("suggestion", ""))[:1000],
+                        code_snippet=issue_data.get("code_snippet")
+                    )
+                    db.add(db_issue)
+                    saved_count += 1
+                except Exception as e:
+                    print(f"❌ Error saving issue: {str(e)}")
+                    print(f"   Issue data: {issue_data}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+            if saved_count > 0:
+                try:
+                    db.commit()
+                    print(f"✅ Saved {saved_count}/{len(issues_to_save)} issues for analysis {db_analysis.id}")
+                except Exception as e:
+                    print(f"❌ Error committing issues: {str(e)}")
+                    db.rollback()
+            else:
+                print(f"⚠️  No issues were saved for analysis {db_analysis.id}")
         
         return AnalyzeResponse(
             analysis_id=db_analysis.id,

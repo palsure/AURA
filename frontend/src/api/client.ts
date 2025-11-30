@@ -9,6 +9,15 @@ export const apiClient = axios.create({
   },
 })
 
+// Add response interceptor for error handling
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    console.error('API Error:', error.response?.data || error.message)
+    return Promise.reject(error)
+  }
+)
+
 export interface AnalyzeRequest {
   code: string
   language?: string
