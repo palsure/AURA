@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     
     # For production PostgreSQL, the DATABASE_URL will be provided by the hosting platform
     # Format: postgresql://user:password@host:port/dbname
-    # SQLAlchemy needs: postgresql+psycopg2://user:password@host:port/dbname
+    # SQLAlchemy needs: postgresql+psycopg://user:password@host:port/dbname (psycopg3)
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
@@ -44,9 +44,20 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Get database URL with proper driver for PostgreSQL"""
         url = self.DATABASE_URL
-        # Convert postgresql:// to postgresql+psycopg2:// for SQLAlchemy
-        if url.startswith("postgresql://") and "+psycopg2" not in url:
-            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        
+        # Validate URL is not empty
+        if not url or not url.strip():
+            raise ValueError(
+                "DATABASE_URL is not set. Please set it in your environment variables. "
+                "For Render: Create a PostgreSQL database and copy the Internal Database URL."
+            )
+        
+        url = url.strip()
+        
+        # Convert postgresql:// to postgresql+psycopg:// for SQLAlchemy (psycopg3)
+        if url.startswith("postgresql://") and "+psycopg" not in url:
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        
         return url
     
     # File Storage

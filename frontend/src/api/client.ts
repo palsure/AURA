@@ -43,6 +43,10 @@ export interface DashboardStats {
   issues_by_severity: Record<string, number>
   recent_analyses: number
   total_repositories: number
+  total_tests: number
+  average_test_coverage: number
+  tests_created_last_7_days: number
+  tests_by_type: Record<string, number>
 }
 
 export const analyzeCode = async (request: AnalyzeRequest): Promise<AnalyzeResponse> => {

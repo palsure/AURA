@@ -3,6 +3,8 @@ AURA - Autonomous Unified Review Agent
 Main Application Entry Point
 """
 
+import logging
+import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,17 +15,28 @@ from app.core.config import settings
 from app.api.v1.router import api_router
 from app.db.database import init_db
 
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG if settings.DEBUG else logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
-    print("🚀 Starting AURA...")
+    logger.info("🚀 Starting AURA...")
     init_db()
-    print("✅ Database initialized")
+    logger.info("✅ Database initialized")
     yield
     # Shutdown
-    print("👋 Shutting down AURA...")
+    logger.info("👋 Shutting down AURA...")
 
 
 app = FastAPI(

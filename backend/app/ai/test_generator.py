@@ -3,10 +3,15 @@ Test Generation Module
 Automatically generates tests for code using AI
 """
 
+import logging
+import time
+import re
 from typing import List, Dict, Any, Optional
 from app.ai.agent import CodeMindAgent
 from app.ai.code_parser import CodeParser
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 try:
     from openai import OpenAI
@@ -140,7 +145,18 @@ class TestGenerator:
             # Determine test framework based on language
             framework = "pytest" if language == "python" else "jest" if language in ["javascript", "typescript"] else "JUnit" if language == "java" else "standard"
             
-            prompt = f"""Generate comprehensive {test_type} tests for the following {language} code.
+            # Customize prompt based on test type
+            if test_type == 'e2e':
+                test_description = "end-to-end (E2E) tests that test complete workflows and user journeys"
+                test_focus = "Test complete user workflows, integration between components, and full application flows"
+            elif test_type == 'acceptance':
+                test_description = "acceptance tests that verify user requirements and business logic"
+                test_focus = "Test user scenarios, business requirements, and acceptance criteria. Focus on 'what' the system should do from a user perspective"
+            else:  # unit
+                test_description = "unit tests for individual functions and methods"
+                test_focus = "Test individual functions and methods in isolation"
+            
+            prompt = f"""Generate comprehensive {test_description} for the following {language} code.
 
 CRITICAL REQUIREMENTS:
 - Generate COMPLETE, RUNNABLE test code with FULL implementations
@@ -154,7 +170,7 @@ Code to test:
 {code}
 ```
 
-{f'Focus on testing the function: {function_name}' if function_name else 'Test all functions and methods'}
+{f'Focus on testing the function: {function_name}' if function_name else test_focus}
 
 Test Requirements:
 1. Cover all functions and methods with complete test implementations
@@ -164,21 +180,62 @@ Test Requirements:
 5. Add proper assertions/expectations for every test case
 6. Include setup/teardown if needed
 7. Make tests immediately runnable - no placeholders or TODOs
+{f'8. For E2E tests: Test complete workflows, user interactions, and integration between components' if test_type == 'e2e' else ''}
+{f'9. For Acceptance tests: Test user scenarios, business requirements, and acceptance criteria' if test_type == 'acceptance' else ''}
 
 Generate ONLY the complete test code file. Do not include explanations or comments about placeholders."""
 
             model_to_use = ai_model or settings.OPENAI_MODEL
-            response = self.openai_client.chat.completions.create(
-                model=model_to_use,
-                messages=[
-                    {"role": "system", "content": "You are an expert test engineer. You MUST generate complete, production-ready test code with full implementations. NEVER use placeholders, TODOs, or empty test bodies. Every test must have complete logic, actual test data, and proper assertions. The code must be immediately runnable."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,  # Lower temperature for more consistent test generation
-                max_tokens=4000  # Increased for more complete tests
-            )
             
-            test_code = response.choices[0].message.content
+            # Log AI request
+            logger.info("=" * 80)
+            logger.info("🤖 AI REQUEST - OpenAI Test Generation")
+            logger.info(f"   Model: {model_to_use}")
+            logger.info(f"   Language: {language}")
+            logger.info(f"   Test Type: {test_type}")
+            logger.info(f"   Code Length: {len(code)} characters")
+            logger.info(f"   Prompt Length: {len(prompt)} characters")
+            logger.info(f"   Temperature: 0.2")
+            logger.info(f"   Max Tokens: 4000")
+            logger.debug(f"   Prompt Preview: {prompt[:200]}...")
+            start_time = time.time()
+            
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model=model_to_use,
+                    messages=[
+                        {"role": "system", "content": "You are an expert test engineer. You MUST generate complete, production-ready test code with full implementations. NEVER use placeholders, TODOs, or empty test bodies. Every test must have complete logic, actual test data, and proper assertions. The code must be immediately runnable."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.2,  # Lower temperature for more consistent test generation
+                    max_tokens=4000  # Increased for more complete tests
+                )
+                
+                elapsed_time = time.time() - start_time
+                test_code = response.choices[0].message.content
+                
+                # Log AI response
+                logger.info("✅ AI RESPONSE - OpenAI Test Generation")
+                logger.info(f"   Response Time: {elapsed_time:.2f}s")
+                logger.info(f"   Test Code Length: {len(test_code)} characters")
+                
+                # Log token usage if available
+                if hasattr(response, 'usage'):
+                    usage = response.usage
+                    logger.info(f"   Tokens - Prompt: {usage.prompt_tokens if hasattr(usage, 'prompt_tokens') else 'N/A'}, "
+                              f"Completion: {usage.completion_tokens if hasattr(usage, 'completion_tokens') else 'N/A'}, "
+                              f"Total: {usage.total_tokens if hasattr(usage, 'total_tokens') else 'N/A'}")
+                
+                logger.debug(f"   Test Code Preview: {test_code[:300]}...")
+                logger.info("=" * 80)
+                
+            except Exception as e:
+                elapsed_time = time.time() - start_time
+                logger.error(f"❌ AI REQUEST FAILED - OpenAI Test Generation")
+                logger.error(f"   Error: {str(e)}")
+                logger.error(f"   Response Time: {elapsed_time:.2f}s")
+                logger.error("=" * 80)
+                raise
             
             # Extract test code from markdown if present
             if "```" in test_code:
@@ -629,22 +686,49 @@ public class YourClassTest {
     
     def _estimate_coverage(self, code: str, test_code: str) -> float:
         """Estimate test coverage percentage"""
-        # Simple heuristic: count functions in code vs tests
-        code_functions = (
-            code.count("def ") + code.count("function ") + 
-            code.count("const ") + code.count("let ") +
-            code.count("public ") + code.count("private ") + code.count("protected ")
-        )
-        test_functions = (
+        # Count testable elements in code
+        code_elements = 0
+        
+        # Python: functions and classes
+        code_elements += len(re.findall(r'\bdef\s+\w+', code))
+        code_elements += len(re.findall(r'\bclass\s+\w+', code))
+        
+        # JavaScript/TypeScript: functions, classes, components, exports
+        code_elements += len(re.findall(r'(?:function|const|let|var)\s+\w+\s*[=:]', code))
+        code_elements += len(re.findall(r'\bclass\s+\w+', code))
+        code_elements += len(re.findall(r'export\s+(?:default\s+)?(?:function|class|const|let|var)\s+\w+', code))
+        
+        # Java: methods and classes
+        code_elements += len(re.findall(r'(?:public|private|protected)\s+\w+\s+\w+\s*\(', code))
+        code_elements += len(re.findall(r'\bclass\s+\w+', code))
+        
+        # If no explicit functions/classes, count significant statements (imports, calls, etc.)
+        if code_elements == 0:
+            # Count meaningful code lines (non-empty, non-comment)
+            lines = [line.strip() for line in code.split('\n') 
+                    if line.strip() and not line.strip().startswith('#') 
+                    and not line.strip().startswith('//')]
+            code_elements = max(1, len(lines) // 3)  # Rough estimate: 1 testable element per 3 lines
+        
+        # Count test cases in test code
+        test_cases = (
             test_code.count("def test_") + test_code.count("test(") + 
             test_code.count("it(") + test_code.count("@Test") + 
-            test_code.count("void test")
+            test_code.count("void test") + test_code.count("describe(")
         )
         
-        if code_functions == 0:
+        # If test code exists but no explicit test cases found, estimate based on test code length
+        if test_cases == 0 and len(test_code.strip()) > 50:
+            # Estimate: assume at least 1 test case if substantial test code exists
+            test_cases = 1
+        
+        if code_elements == 0:
+            # If we can't identify testable elements but test code exists, give partial credit
+            if test_cases > 0:
+                return min(50.0, test_cases * 10.0)  # Cap at 50% if we can't properly analyze
             return 0.0
         
-        coverage = min(100.0, (test_functions / max(1, code_functions)) * 100)
+        coverage = min(100.0, (test_cases / max(1, code_elements)) * 100)
         return round(coverage, 2)
     
     def generate_regression_tests(
@@ -781,11 +865,44 @@ Generate regression tests that specifically prevent these issues from recurring.
             # Determine test framework based on language
             framework = "pytest" if language == "python" else "jest" if language in ["javascript", "typescript"] else "JUnit" if language == "java" else "standard"
             
-            prompt = f"""Generate comprehensive {test_type} tests for the following {language} code.
+            # Customize prompt based on test type
+            if test_type == 'e2e':
+                test_description = "end-to-end (E2E) tests that test complete workflows and user journeys"
+                test_focus = "Test complete user workflows, integration between components, and full application flows"
+            elif test_type == 'acceptance':
+                test_description = "acceptance tests that verify user requirements and business logic"
+                test_focus = "Test user scenarios, business requirements, and acceptance criteria. Focus on 'what' the system should do from a user perspective"
+            else:  # unit
+                test_description = "unit tests for individual functions and methods"
+                test_focus = "Test individual functions and methods in isolation"
+            
+            # Extract actual imports, functions, and components from code
+            import_lines = [line for line in code.split('\n') if line.strip().startswith('import ') or line.strip().startswith('from ')]
+            actual_imports = '\n'.join(import_lines[:10])  # First 10 import lines
+            
+            # Extract function/component names from code
+            if language.lower() in ['typescript', 'javascript', 'ts', 'js']:
+                # Extract function names, component names, exports
+                func_pattern = r'(?:export\s+)?(?:function|const|let|var)\s+(\w+)|(?:export\s+)?(?:class|interface|type)\s+(\w+)|export\s+(?:default\s+)?(\w+)'
+                matches = re.findall(func_pattern, code)
+                actual_names = [name for match in matches for name in match if name]
+            elif language.lower() in ['python', 'py']:
+                func_pattern = r'def\s+(\w+)|class\s+(\w+)'
+                matches = re.findall(func_pattern, code)
+                actual_names = [name for match in matches for name in match if name]
+            else:
+                actual_names = []
+            
+            actual_names_str = ', '.join(actual_names[:5]) if actual_names else 'the code'
+            
+            prompt = f"""Generate comprehensive {test_description} for the following {language} code.
 
 CRITICAL REQUIREMENTS:
 - Generate COMPLETE, RUNNABLE test code with FULL implementations
-- DO NOT use placeholders, TODOs, or empty test bodies
+- DO NOT use placeholders like 'yourFunction', 'your-module', 'yourComponent', etc.
+- DO NOT use TODOs or empty test bodies
+- Analyze the ACTUAL code structure and use REAL function/component names from the source code
+- Use the EXACT imports, function names, and component names that appear in the source code
 - Include actual test data, assertions, and expected results
 - Every test must have complete logic and assertions
 - Use appropriate testing framework: {framework}
@@ -795,31 +912,87 @@ Code to test:
 {code}
 ```
 
-{f'Focus on testing the function: {function_name}' if function_name else 'Test all functions and methods'}
+IMPORTANT: The code above contains the following actual elements:
+{f'- Imports: {actual_imports[:200]}...' if actual_imports else ''}
+{f'- Functions/Components: {actual_names_str}' if actual_names else '- Analyze the code structure to identify testable elements'}
+{f'- Focus on testing: {function_name}' if function_name else ''}
+
+{f'Focus on testing the function: {function_name}' if function_name else test_focus}
 
 Test Requirements:
-1. Cover all functions and methods with complete test implementations
-2. Include edge cases (empty inputs, null values, boundary conditions)
-3. Include error handling tests with actual error scenarios
-4. Use descriptive test names that explain what is being tested
-5. Add proper assertions/expectations for every test case
-6. Include setup/teardown if needed
-7. Make tests immediately runnable - no placeholders or TODOs
+1. Analyze the ACTUAL code structure - identify all functions, components, exports, and imports
+2. Use the EXACT names from the source code (e.g., if code has 'registerRootComponent', use that name, not 'yourFunction')
+3. Use the EXACT imports from the source code (e.g., if code imports 'App from ./App', use that import)
+4. Cover all functions, components, and exported elements with complete test implementations
+5. Include edge cases (empty inputs, null values, boundary conditions)
+6. Include error handling tests with actual error scenarios
+7. Use descriptive test names that explain what is being tested
+8. Add proper assertions/expectations for every test case
+9. Include setup/teardown if needed
+10. Make tests immediately runnable - no placeholders, TODOs, or generic names
+{f'11. For E2E tests: Test complete workflows, user interactions, and integration between components' if test_type == 'e2e' else ''}
+{f'12. For Acceptance tests: Test user scenarios, business requirements, and acceptance criteria' if test_type == 'acceptance' else ''}
+
+EXAMPLE OF WHAT NOT TO DO:
+❌ const {{ yourFunction }} = require('./your-module');
+❌ test('should handle basic functionality', () => {{ yourFunction([1,2,3]); }});
+
+EXAMPLE OF WHAT TO DO:
+✅ Use actual imports: import {{ registerRootComponent }} from 'expo';
+✅ Use actual names: test('registerRootComponent registers App component', () => {{ ... }});
 
 Generate ONLY the complete test code file. Do not include explanations or comments about placeholders."""
 
             model_to_use = ai_model or settings.ANTHROPIC_MODEL
-            message = self.anthropic_client.messages.create(
-                model=model_to_use,
-                max_tokens=4000,  # Increased for more complete tests
-                temperature=0.2,
-                system="You are an expert test engineer. You MUST generate complete, production-ready test code with full implementations. NEVER use placeholders, TODOs, or empty test bodies. Every test must have complete logic, actual test data, and proper assertions. The code must be immediately runnable.",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
             
-            test_code = message.content[0].text
+            # Log AI request
+            logger.info("=" * 80)
+            logger.info("🤖 AI REQUEST - Anthropic Claude Test Generation")
+            logger.info(f"   Model: {model_to_use}")
+            logger.info(f"   Language: {language}")
+            logger.info(f"   Test Type: {test_type}")
+            logger.info(f"   Code Length: {len(code)} characters")
+            logger.info(f"   Prompt Length: {len(prompt)} characters")
+            logger.info(f"   Temperature: 0.2")
+            logger.info(f"   Max Tokens: 4000")
+            logger.debug(f"   Prompt Preview: {prompt[:200]}...")
+            start_time = time.time()
+            
+            try:
+                message = self.anthropic_client.messages.create(
+                    model=model_to_use,
+                    max_tokens=4000,  # Increased for more complete tests
+                    temperature=0.2,
+                    system="You are an expert test engineer. You MUST generate complete, production-ready test code with full implementations. NEVER use placeholders, TODOs, or empty test bodies. Every test must have complete logic, actual test data, and proper assertions. The code must be immediately runnable.",
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                
+                elapsed_time = time.time() - start_time
+                test_code = message.content[0].text
+                
+                # Log AI response
+                logger.info("✅ AI RESPONSE - Anthropic Claude Test Generation")
+                logger.info(f"   Response Time: {elapsed_time:.2f}s")
+                logger.info(f"   Test Code Length: {len(test_code)} characters")
+                
+                # Log token usage if available
+                if hasattr(message, 'usage'):
+                    usage = message.usage
+                    logger.info(f"   Tokens - Input: {usage.input_tokens if hasattr(usage, 'input_tokens') else 'N/A'}, "
+                              f"Output: {usage.output_tokens if hasattr(usage, 'output_tokens') else 'N/A'}")
+                
+                logger.debug(f"   Test Code Preview: {test_code[:300]}...")
+                logger.info("=" * 80)
+                
+            except Exception as e:
+                elapsed_time = time.time() - start_time
+                logger.error(f"❌ AI REQUEST FAILED - Anthropic Claude Test Generation")
+                logger.error(f"   Error: {str(e)}")
+                logger.error(f"   Response Time: {elapsed_time:.2f}s")
+                logger.error("=" * 80)
+                raise
             
             # Extract test code from markdown if present
             if "```" in test_code:

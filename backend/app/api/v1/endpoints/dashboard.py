@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any
 
 from app.db.database import get_db
-from app.db.models import CodeAnalysis, Issue, Repository
+from app.db.models import CodeAnalysis, Issue, Repository, GeneratedTest
 
 router = APIRouter()
 
@@ -47,6 +47,23 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     # Repositories
     total_repos = db.query(Repository).count()
     
+    # Test metrics
+    total_tests = db.query(GeneratedTest).count()
+    
+    # Average test coverage
+    avg_coverage = db.query(func.avg(GeneratedTest.coverage_percentage)).scalar() or 0
+    
+    # Tests created in last 7 days
+    tests_last_7_days = db.query(GeneratedTest).filter(
+        GeneratedTest.created_at >= week_ago
+    ).count()
+    
+    # Tests by type
+    tests_by_type = db.query(
+        GeneratedTest.test_type,
+        func.count(GeneratedTest.id).label('count')
+    ).group_by(GeneratedTest.test_type).all()
+    
     return {
         "total_analyses": total_analyses,
         "total_issues": total_issues,
@@ -56,7 +73,11 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
         "issues_by_type": {item[0]: item[1] for item in issues_by_type},
         "issues_by_severity": {item[0]: item[1] for item in issues_by_severity},
         "recent_analyses": recent_analyses,
-        "total_repositories": total_repos
+        "total_repositories": total_repos,
+        "total_tests": total_tests,
+        "average_test_coverage": round(float(avg_coverage), 2),
+        "tests_created_last_7_days": tests_last_7_days,
+        "tests_by_type": {item[0]: item[1] for item in tests_by_type if item[0]}
     }
 
 

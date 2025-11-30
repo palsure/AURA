@@ -51,6 +51,7 @@ export default function RepositoryDetails() {
     language: string
     coverage: number
     filePath: string
+    testType?: 'unit' | 'e2e' | 'acceptance'  // Store test type to preserve it when accepting
   } | null>(null)
   const [isRefiningTest, setIsRefiningTest] = useState(false)
   const [aiStatus, setAIStatus] = useState<{ openai_available: boolean; anthropic_available: boolean } | null>(null)
@@ -61,6 +62,42 @@ export default function RepositoryDetails() {
   const [reviewGenerateTests, setReviewGenerateTests] = useState(true)
   const [reviewGenerateIssues, setReviewGenerateIssues] = useState(true)
   const [reviewGeneratePredictions, setReviewGeneratePredictions] = useState(true)
+  const [selectedTestType, setSelectedTestType] = useState<'unit' | 'e2e' | 'acceptance'>('unit')
+  const [testCoverageTab, setTestCoverageTab] = useState<'unit' | 'e2e'>('unit')
+  const [coverageViewTab, setCoverageViewTab] = useState<'covered' | 'needs'>('covered')
+  const [viewingTest, setViewingTest] = useState<any>(null)
+
+  // Helper function to count test methods/cases in test code
+  const countTestMethods = (testCode: string): number => {
+    if (!testCode) return 0
+    // Count test methods/cases
+    const patterns = [
+      /def\s+test_/g,           // Python: def test_
+      /test\s*\(/g,              // JavaScript/TypeScript: test(
+      /it\s*\(/g,                // JavaScript/TypeScript: it(
+      /@Test/g,                   // Java: @Test
+      /void\s+test/g,            // Java: void test
+      /describe\s*\(/g          // JavaScript/TypeScript: describe(
+    ]
+    let count = 0
+    patterns.forEach(pattern => {
+      const matches = testCode.match(pattern)
+      if (matches) count += matches.length
+    })
+    // If no patterns found but code exists, estimate based on structure
+    if (count === 0 && testCode.length > 100) {
+      // Rough estimate: count lines that look like test definitions
+      const lines = testCode.split('\n')
+      count = lines.filter(line => {
+        const trimmed = line.trim()
+        return trimmed.startsWith('test') || 
+               trimmed.startsWith('it(') || 
+               trimmed.startsWith('def ') ||
+               trimmed.includes('@Test')
+      }).length
+    }
+    return count || 1 // At least 1 if test code exists
+  }
 
   useEffect(() => {
     if (id) {
@@ -83,6 +120,13 @@ export default function RepositoryDetails() {
     }
     initializeModel()
   }, [id])
+
+  // Debug viewingTest changes
+  useEffect(() => {
+    if (viewingTest) {
+      console.log('viewingTest changed:', viewingTest)
+    }
+  }, [viewingTest])
 
   const checkAIStatus = async () => {
     try {
@@ -141,7 +185,7 @@ export default function RepositoryDetails() {
     }
   }
 
-  const handleGenerateTest = async (filePath: string, language: string, code?: string) => {
+  const handleGenerateTest = async (filePath: string, language: string, code?: string, testType: 'unit' | 'e2e' | 'acceptance' = 'unit') => {
     if (!id) return
     
     // If code is not provided, load it first
@@ -172,6 +216,7 @@ export default function RepositoryDetails() {
     try {
       console.log('🔍 Generating tests with:', {
         language,
+        test_type: testType,
         ai_model: selectedModel,
         ai_provider: selectedProvider,
         code_length: codeToTest.length,
@@ -196,7 +241,7 @@ export default function RepositoryDetails() {
       const response = await generateTests({
         code: codeToTest,
         language: language,
-        test_type: 'unit',
+        test_type: testType,
         ai_model: selectedModel || undefined,
         ai_provider: selectedProvider || undefined,
         // Don't save immediately - show preview first
@@ -218,7 +263,8 @@ export default function RepositoryDetails() {
         fileName: filePath.split('/').pop() || filePath,
         language: language,
         coverage: response.coverage_estimate || response.coverage || 0,
-        filePath: filePath
+        filePath: filePath,
+        testType: testType  // Store the test type so it persists when accepting
       })
       
       setGeneratingTest(null)
@@ -248,11 +294,21 @@ export default function RepositoryDetails() {
     if (!previewTest || !id) return
     
     try {
+      // Use the test type from previewTest (which was set during generation)
+      // Fall back to selectedTestType if not available
+      const testTypeToSave = previewTest.testType || selectedTestType || 'unit'
+      
+      console.log('💾 Saving test with type:', testTypeToSave, {
+        hasPreviewTestType: !!(previewTest as any).testType,
+        selectedTestType,
+        previewTest
+      })
+      
       // Save the test to the repository
       const response = await generateTests({
         code: previewTest.code,
         language: previewTest.language,
-        test_type: 'unit',
+        test_type: testTypeToSave,
         ai_model: selectedModel,
         ai_provider: selectedProvider,
         repository_id: parseInt(id),
@@ -309,20 +365,24 @@ export default function RepositoryDetails() {
       // Format the refinement request more explicitly
       const refinedCode = `${codeToTest}\n\n/*\nREFINEMENT INSTRUCTIONS:\n${refinementInstructions}\n\nIMPORTANT: Generate COMPLETE, RUNNABLE test code with full implementations. Do NOT use placeholders, TODOs, or empty test bodies. Every test must have complete logic, actual test data, and proper assertions.\n*/`
       
+      // Use the test type from previewTest, fallback to 'unit'
+      const testTypeToRefine = previewTest.testType || 'unit'
+      
       const response = await generateTests({
         code: refinedCode,
         language: previewTest.language,
-        test_type: 'unit',
+        test_type: testTypeToRefine,
         ai_model: selectedModel,
         ai_provider: selectedProvider
       })
       
-      // Update preview with refined test (keep source code)
+      // Update preview with refined test (keep source code and test type)
       setPreviewTest({
         ...previewTest,
         code: response.test_code,
         sourceCode: codeToTest, // Keep the source code
-        coverage: response.coverage_estimate || response.coverage || 0
+        coverage: response.coverage_estimate || response.coverage || 0,
+        testType: testTypeToRefine  // Preserve test type during refinement
       })
       
       setToast({
@@ -560,10 +620,18 @@ export default function RepositoryDetails() {
         </div>
         <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
           <div className="flex items-center space-x-2 mb-1">
-            <BarChart3 className="h-4 w-4 text-green-400" />
+            <BarChart3 className={`h-4 w-4 ${
+              totalCoverage < 50 ? 'text-red-400' :
+              totalCoverage < 80 ? 'text-orange-400' :
+              'text-green-400'
+            }`} />
             <p className="text-slate-400 text-sm">Test Coverage</p>
           </div>
-          <p className="text-2xl font-bold">{totalCoverage.toFixed(1)}%</p>
+          <p className={`text-2xl font-bold ${
+            totalCoverage < 50 ? 'text-red-400' :
+            totalCoverage < 80 ? 'text-orange-400' :
+            'text-green-400'
+          }`}>{totalCoverage.toFixed(1)}%</p>
         </div>
         <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
           <p className="text-slate-400 text-sm mb-1">Quality Score</p>
@@ -959,30 +1027,57 @@ export default function RepositoryDetails() {
                 <h2 className="text-xl font-semibold">Test Coverage</h2>
                 <div className="flex items-center space-x-4">
                   <span className="text-sm text-slate-400">
-                    Overall Coverage: <span className="font-semibold text-white">{totalCoverage.toFixed(1)}%</span>
+                    Overall Coverage: <span className={`font-semibold ${
+                      totalCoverage < 50 ? 'text-red-400' :
+                      totalCoverage < 80 ? 'text-orange-400' :
+                      'text-green-400'
+                    }`}>{totalCoverage.toFixed(1)}%</span>
                   </span>
                 </div>
               </div>
 
-              {/* Coverage Statistics */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <FileText className="h-4 w-4 text-slate-400" />
-                    <span className="text-sm text-slate-400">Source Files</span>
-                  </div>
-                  <p className="text-2xl font-bold">{sourceFiles.length}</p>
+              {/* Test Type Tabs */}
+              <div className="border-b border-slate-700">
+                <div className="flex space-x-1">
+                  <button
+                    onClick={() => setTestCoverageTab('unit')}
+                    className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                      testCoverageTab === 'unit'
+                        ? 'border-primary-500 text-primary-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-300'
+                    }`}
+                  >
+                    Unit Test
+                  </button>
+                  <button
+                    onClick={() => setTestCoverageTab('e2e')}
+                    className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                      testCoverageTab === 'e2e'
+                        ? 'border-primary-500 text-primary-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-300'
+                    }`}
+                  >
+                    E2E Test
+                  </button>
                 </div>
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <CheckCircle className="h-4 w-4 text-green-400" />
-                    <span className="text-sm text-slate-400">Files with Tests</span>
-                  </div>
-                  <p className="text-2xl font-bold text-green-400">
-                    {sourceFiles.filter(f => {
+              </div>
+
+              {/* Unit Test Tab */}
+              {testCoverageTab === 'unit' && (
+                <div className="space-y-6">
+                  {/* Unit Test Statistics */}
+                  {(() => {
+                    const unitTests = tests.filter((t: any) => 
+                      !t.test_type || t.test_type === 'unit' || t.test_type === 'Unit Test'
+                    )
+                    const unitTestFiles = testFiles.filter(f => {
+                      const name = f.name.toLowerCase()
+                      return name.includes('test') || name.includes('spec') || name.includes('unit')
+                    })
+                    const filesWithUnitTests = sourceFiles.filter(f => {
                       const sourceName = f.name.toLowerCase()
                       const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
-                      const matchingTestFiles = testFiles.filter(testFile => {
+                      const matchingTestFiles = unitTestFiles.filter(testFile => {
                         const testName = testFile.name.toLowerCase()
                         const testBaseName = testName
                           .replace(/^test_/, '')
@@ -992,49 +1087,186 @@ export default function RepositoryDetails() {
                           .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
                         return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
                       })
-                      const fileTests = tests.filter((t: any) => {
+                      const fileTests = unitTests.filter((t: any) => {
                         const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
                         if (!testAnalysis) return false
                         const testPath = testAnalysis.file_path?.toLowerCase() || ''
                         return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
                       })
                       return matchingTestFiles.length > 0 || fileTests.length > 0
-                    }).length}
-                  </p>
-                </div>
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <AlertTriangle className="h-4 w-4 text-yellow-400" />
-                    <span className="text-sm text-slate-400">Files Needing Tests</span>
-                  </div>
-                  <p className="text-2xl font-bold text-yellow-400">
-                    {sourceFiles.filter(f => {
-                      const sourceName = f.name.toLowerCase()
-                      const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
-                      const matchingTestFiles = testFiles.filter(testFile => {
-                        const testName = testFile.name.toLowerCase()
-                        const testBaseName = testName
-                          .replace(/^test_/, '')
-                          .replace(/_test\./, '.')
-                          .replace(/\.test\./, '.')
-                          .replace(/\.spec\./, '.')
-                          .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
-                        return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
-                      })
-                      const fileTests = tests.filter((t: any) => {
-                        const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
-                        if (!testAnalysis) return false
-                        const testPath = testAnalysis.file_path?.toLowerCase() || ''
-                        return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
-                      })
-                      return matchingTestFiles.length === 0 && fileTests.length === 0
-                    }).length}
-                  </p>
-                </div>
-              </div>
+                    })
+                    const unitCoverage = sourceFiles.length > 0 
+                      ? (filesWithUnitTests.length / sourceFiles.length) * 100 
+                      : 0
+                    
+                    // Count actual test methods/cases
+                    let totalTestMethods = unitTests.reduce((sum: number, test: any) => {
+                      const testCount = test.test_count || countTestMethods(test.test_code || '')
+                      return sum + (testCount > 0 ? testCount : 0)
+                    }, 0)
+                    
+                    // If no methods found but test files exist, count test files
+                    if (totalTestMethods === 0 && unitTests.length > 0) {
+                      totalTestMethods = unitTests.length
+                    }
+                    // Also count test files if they exist
+                    if (totalTestMethods === 0 && unitTestFiles.length > 0) {
+                      totalTestMethods = unitTestFiles.length
+                    }
 
-              {/* Files Needing Test Coverage */}
-              <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <TestTube className="h-4 w-4 text-blue-400" />
+                            <span className="text-sm text-slate-400">Unit Tests</span>
+                          </div>
+                          <p className="text-2xl font-bold text-blue-400">
+                            {totalTestMethods > 0 ? totalTestMethods : (unitTests.length > 0 ? unitTests.length : unitTestFiles.length)}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {unitTests.length + unitTestFiles.length} test file{(unitTests.length + unitTestFiles.length) !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+                        <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <BarChart3 className={`h-4 w-4 ${
+                              unitCoverage < 50 ? 'text-red-400' :
+                              unitCoverage < 80 ? 'text-orange-400' :
+                              'text-green-400'
+                            }`} />
+                            <span className="text-sm text-slate-400">Coverage</span>
+                          </div>
+                          <p className={`text-2xl font-bold ${
+                            unitCoverage < 50 ? 'text-red-400' :
+                            unitCoverage < 80 ? 'text-orange-400' :
+                            'text-green-400'
+                          }`}>{unitCoverage.toFixed(1)}%</p>
+                        </div>
+                        <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <FileText className="h-4 w-4 text-slate-400" />
+                            <span className="text-sm text-slate-400">Files Covered</span>
+                          </div>
+                          <p className="text-2xl font-bold text-white">
+                            {filesWithUnitTests.length} / {sourceFiles.length}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Coverage View Tabs */}
+                  <div className="border-b border-slate-700 mt-6">
+                    <div className="flex space-x-1">
+                      <button
+                        onClick={() => setCoverageViewTab('covered')}
+                        className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                          coverageViewTab === 'covered'
+                            ? 'border-primary-500 text-primary-400'
+                            : 'border-transparent text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Covered Tests
+                      </button>
+                      <button
+                        onClick={() => setCoverageViewTab('needs')}
+                        className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                          coverageViewTab === 'needs'
+                            ? 'border-primary-500 text-primary-400'
+                            : 'border-transparent text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Needs Coverage
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Covered Tests Tab */}
+                  {coverageViewTab === 'covered' && (() => {
+                    const unitTests = tests.filter((t: any) => 
+                      !t.test_type || t.test_type === 'unit' || t.test_type === 'Unit Test'
+                    )
+                    const unitTestFiles = testFiles.filter(f => {
+                      const name = f.name.toLowerCase()
+                      return name.includes('test') || name.includes('spec') || name.includes('unit')
+                    })
+
+                    if (unitTests.length === 0 && unitTestFiles.length === 0) {
+                      return (
+                        <div className="text-center py-8 mt-4">
+                          <TestTube className="h-12 w-12 text-slate-600 mx-auto mb-2" />
+                          <p className="text-slate-400">No tests found</p>
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <div className="space-y-4 mt-4">
+                        <h3 className="text-lg font-semibold text-white">Test Classes</h3>
+                        <div className="space-y-2">
+                          {/* Show generated test objects */}
+                          {unitTests.map((test: any) => {
+                            const testAnalysis = analyses.find((a: any) => a.id === test.analysis_id)
+                            const testPath = testAnalysis?.file_path || 'Unknown'
+                            return (
+                              <div
+                                key={test.id}
+                                className="bg-slate-800/50 rounded-lg p-4 border border-slate-600"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-3">
+                                    <TestTube className="h-5 w-5 text-blue-400" />
+                                    <div>
+                                      <p className="text-sm font-semibold text-white">{testPath.split('/').pop()}</p>
+                                      <p className="text-xs text-slate-400">{testPath}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center space-x-4">
+                                    <span className="text-sm text-slate-300">
+                                      Coverage: <span className="font-semibold">{test.coverage_percentage?.toFixed(1)}%</span>
+                                    </span>
+                                    <span className="text-sm text-slate-300">
+                                      Tests: <span className="font-semibold">{test.test_count || countTestMethods(test.test_code || '')}</span>
+                                    </span>
+                                    <button
+                                      onClick={() => setViewingTest(test)}
+                                      className="text-xs text-primary-400 hover:text-primary-300 flex items-center space-x-1"
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      <span>View</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {/* Show test files */}
+                          {unitTestFiles.map((testFile: any) => (
+                            <div
+                              key={testFile.name}
+                              className="bg-slate-800/50 rounded-lg p-4 border border-slate-600"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                  <FileText className="h-5 w-5 text-blue-400" />
+                                  <div>
+                                    <p className="text-sm font-semibold text-white">{testFile.name}</p>
+                                    <p className="text-xs text-slate-400">{testFile.relative_path || testFile.name}</p>
+                                  </div>
+                                </div>
+                                <span className="text-xs text-slate-400">Test File</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Needs Coverage Tab */}
+                  {coverageViewTab === 'needs' && (
+                    <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600 mt-4">
                 {aiStatus && !aiStatus.openai_available && !aiStatus.anthropic_available && (
                   <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/50 rounded-lg">
                     <div className="flex items-center space-x-2">
@@ -1071,12 +1303,137 @@ export default function RepositoryDetails() {
                     }).length} files
                   </span>
                 </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {sourceFiles
-                    .filter(f => {
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {(() => {
+                        const unitTests = tests.filter((t: any) => 
+                          !t.test_type || t.test_type === 'unit' || t.test_type === 'Unit Test'
+                        )
+                        const unitTestFiles = testFiles.filter(f => {
+                          const name = f.name.toLowerCase()
+                          return name.includes('test') || name.includes('spec') || name.includes('unit')
+                        })
+                        return sourceFiles
+                          .filter(f => {
+                            const sourceName = f.name.toLowerCase()
+                            const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                            const matchingTestFiles = unitTestFiles.filter(testFile => {
+                              const testName = testFile.name.toLowerCase()
+                              const testBaseName = testName
+                                .replace(/^test_/, '')
+                                .replace(/_test\./, '.')
+                                .replace(/\.test\./, '.')
+                                .replace(/\.spec\./, '.')
+                                .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                              return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
+                            })
+                            const fileTests = unitTests.filter((t: any) => {
+                              const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
+                              if (!testAnalysis) return false
+                              const testPath = testAnalysis.file_path?.toLowerCase() || ''
+                              return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
+                            })
+                            return matchingTestFiles.length === 0 && fileTests.length === 0
+                          })
+                          .slice(0, 20)
+                          .map((file) => {
+                            const fileLanguage = getFileLanguage(file.extension || '')
+                            return (
+                              <div
+                                key={file.path}
+                                className="flex items-center justify-between p-3 bg-slate-800/50 rounded border border-slate-600 hover:border-slate-500 transition-colors"
+                              >
+                                <div className="flex items-center space-x-3 flex-1 min-w-0">
+                                  <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-slate-300 truncate">{file.name}</p>
+                                    <p className="text-xs text-slate-500 truncate">{file.relative_path}</p>
+                                  </div>
+                                  <span className="text-xs px-2 py-1 bg-slate-700 rounded text-slate-400">
+                                    {fileLanguage}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setSelectedTestType('unit')
+                                    handleGenerateTest(file.relative_path, fileLanguage, undefined, 'unit')
+                                  }}
+                                  disabled={generatingTest === file.relative_path}
+                                  className="flex items-center space-x-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-4"
+                                >
+                                  {generatingTest === file.relative_path ? (
+                                    <>
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                      <span>Generating...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus className="h-4 w-4" />
+                                      <span>Generate Unit Test</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )
+                          })
+                      })()}
+                      {(() => {
+                        const unitTests = tests.filter((t: any) => 
+                          !t.test_type || t.test_type === 'unit' || t.test_type === 'Unit Test'
+                        )
+                        const unitTestFiles = testFiles.filter(f => {
+                          const name = f.name.toLowerCase()
+                          return name.includes('test') || name.includes('spec') || name.includes('unit')
+                        })
+                        const needsTests = sourceFiles.filter(f => {
+                          const sourceName = f.name.toLowerCase()
+                          const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                          const matchingTestFiles = unitTestFiles.filter(testFile => {
+                            const testName = testFile.name.toLowerCase()
+                            const testBaseName = testName
+                              .replace(/^test_/, '')
+                              .replace(/_test\./, '.')
+                              .replace(/\.test\./, '.')
+                              .replace(/\.spec\./, '.')
+                              .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                            return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
+                          })
+                          const fileTests = unitTests.filter((t: any) => {
+                            const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
+                            if (!testAnalysis) return false
+                            const testPath = testAnalysis.file_path?.toLowerCase() || ''
+                            return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
+                          })
+                          return matchingTestFiles.length === 0 && fileTests.length === 0
+                        })
+                        return needsTests.length === 0 && (
+                          <div className="text-center py-8">
+                            <CheckCircle className="h-12 w-12 text-green-400 mx-auto mb-2" />
+                            <p className="text-slate-400">All source files have unit test coverage!</p>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                  )}
+                </div>
+              )}
+
+              {/* E2E Test Tab */}
+              {testCoverageTab === 'e2e' && (
+                <div className="space-y-6">
+                  {/* E2E Test Statistics */}
+                  {(() => {
+                    const e2eTests = tests.filter((t: any) => 
+                      t.test_type === 'e2e' || t.test_type === 'E2E Test' || t.test_type === 'e2e'
+                    )
+                    const e2eTestFiles = testFiles.filter(f => {
+                      const name = f.name.toLowerCase()
+                      return name.includes('e2e') || name.includes('integration') || name.includes('end-to-end')
+                    })
+                    const filesWithE2ETests = sourceFiles.filter(f => {
                       const sourceName = f.name.toLowerCase()
                       const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
-                      const matchingTestFiles = testFiles.filter(testFile => {
+                      const matchingTestFiles = e2eTestFiles.filter(testFile => {
                         const testName = testFile.name.toLowerCase()
                         const testBaseName = testName
                           .replace(/^test_/, '')
@@ -1086,155 +1443,307 @@ export default function RepositoryDetails() {
                           .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
                         return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
                       })
-                      const fileTests = tests.filter((t: any) => {
+                      const fileTests = e2eTests.filter((t: any) => {
                         const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
                         if (!testAnalysis) return false
                         const testPath = testAnalysis.file_path?.toLowerCase() || ''
                         return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
                       })
-                      return matchingTestFiles.length === 0 && fileTests.length === 0
+                      return matchingTestFiles.length > 0 || fileTests.length > 0
                     })
-                    .slice(0, 20)
-                    .map((file) => {
-                      const fileLanguage = getFileLanguage(file.extension || '')
-                      return (
-                        <div
-                          key={file.path}
-                          className="flex items-center justify-between p-3 bg-slate-800/50 rounded border border-slate-600 hover:border-slate-500 transition-colors"
-                        >
-                          <div className="flex items-center space-x-3 flex-1 min-w-0">
-                            <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-slate-300 truncate">{file.name}</p>
-                              <p className="text-xs text-slate-500 truncate">{file.relative_path}</p>
+                    const e2eCoverage = sourceFiles.length > 0 
+                      ? (filesWithE2ETests.length / sourceFiles.length) * 100 
+                      : 0
+                    
+                    // Count actual test methods/cases for E2E
+                    const totalE2ETestMethods = e2eTests.reduce((sum: number, test: any) => {
+                      return sum + (test.test_count || countTestMethods(test.test_code || ''))
+                    }, 0)
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center space-x-2">
+                              <TestTube className="h-4 w-4 text-purple-400" />
+                              <span className="text-sm text-slate-400">E2E Tests</span>
                             </div>
-                            <span className="text-xs px-2 py-1 bg-slate-700 rounded text-slate-400">
-                              {fileLanguage}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => handleGenerateTest(file.relative_path, fileLanguage)}
-                            disabled={generatingTest === file.relative_path}
-                            className="flex items-center space-x-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-4"
-                          >
-                            {generatingTest === file.relative_path ? (
-                              <>
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                                <span>Generating...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Plus className="h-4 w-4" />
-                                <span>Generate Test</span>
-                              </>
+                            {(totalE2ETestMethods > 0 || e2eTests.length > 0 || e2eTestFiles.length > 0) && (
+                              <button
+                                onClick={() => {
+                                  // Show first test in modal, or scroll to tests section
+                                  if (e2eTests.length > 0) {
+                                    setViewingTest(e2eTests[0])
+                                  } else {
+                                    // Scroll to tests section if it exists
+                                    const element = document.getElementById('generated-e2e-tests')
+                                    if (element) {
+                                      element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                                    }
+                                  }
+                                }}
+                                className="text-xs text-primary-400 hover:text-primary-300 flex items-center space-x-1"
+                              >
+                                <Eye className="h-3 w-3" />
+                                <span>View Tests</span>
+                              </button>
                             )}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  {sourceFiles.filter(f => {
-                    const sourceName = f.name.toLowerCase()
-                    const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
-                    const matchingTestFiles = testFiles.filter(testFile => {
-                      const testName = testFile.name.toLowerCase()
-                      const testBaseName = testName
-                        .replace(/^test_/, '')
-                        .replace(/_test\./, '.')
-                        .replace(/\.test\./, '.')
-                        .replace(/\.spec\./, '.')
-                        .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
-                      return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
-                    })
-                    const fileTests = tests.filter((t: any) => {
-                      const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
-                      if (!testAnalysis) return false
-                      const testPath = testAnalysis.file_path?.toLowerCase() || ''
-                      return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
-                    })
-                    return matchingTestFiles.length === 0 && fileTests.length === 0
-                  }).length === 0 && (
-                    <div className="text-center py-8">
-                      <CheckCircle className="h-12 w-12 text-green-400 mx-auto mb-2" />
-                      <p className="text-slate-400">All source files have test coverage!</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Existing Tests */}
-              {tests.length > 0 && (
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
-                  <h3 className="text-lg font-semibold text-white mb-4">Generated Tests</h3>
-                  <div className="space-y-4">
-                    {tests.map((test: any) => (
-                      <div
-                        key={test.id}
-                        className="bg-slate-800/50 rounded-lg p-4 border border-slate-600"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center space-x-2">
-                            <TestTube className="h-5 w-5 text-green-400" />
-                            <span className="text-sm font-semibold capitalize">{test.test_type} Test</span>
                           </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-sm text-slate-300">
-                              Coverage: <span className="font-semibold">{test.coverage_percentage?.toFixed(1)}%</span>
-                            </span>
-                            <span
-                              className={`text-xs px-2 py-1 rounded ${
-                                test.status === 'passed'
-                                  ? 'bg-green-500/20 text-green-400'
-                                  : test.status === 'failed'
-                                  ? 'bg-red-500/20 text-red-400'
-                                  : 'bg-yellow-500/20 text-yellow-400'
-                              }`}
-                            >
-                              {test.status}
-                            </span>
-                          </div>
+                          <p className="text-2xl font-bold text-purple-400">
+                            {totalE2ETestMethods > 0 ? totalE2ETestMethods : (e2eTests.length > 0 ? e2eTests.length : e2eTestFiles.length)}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {e2eTests.length + e2eTestFiles.length} test file{(e2eTests.length + e2eTestFiles.length) !== 1 ? 's' : ''}
+                          </p>
                         </div>
-                        {test.test_code && (
-                          <details className="mt-2">
-                            <summary className="cursor-pointer text-sm text-primary-400 hover:text-primary-300">
-                              View Test Code
-                            </summary>
-                            <pre className="mt-2 p-3 bg-slate-900 rounded text-xs overflow-x-auto text-slate-300">
-                              {test.test_code}
-                            </pre>
-                          </details>
-                        )}
+                        <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <BarChart3 className={`h-4 w-4 ${
+                              e2eCoverage < 50 ? 'text-red-400' :
+                              e2eCoverage < 80 ? 'text-orange-400' :
+                              'text-green-400'
+                            }`} />
+                            <span className="text-sm text-slate-400">Coverage</span>
+                          </div>
+                          <p className={`text-2xl font-bold ${
+                            e2eCoverage < 50 ? 'text-red-400' :
+                            e2eCoverage < 80 ? 'text-orange-400' :
+                            'text-green-400'
+                          }`}>{e2eCoverage.toFixed(1)}%</p>
+                        </div>
+                        <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <FileText className="h-4 w-4 text-slate-400" />
+                            <span className="text-sm text-slate-400">Files Covered</span>
+                          </div>
+                          <p className="text-2xl font-bold text-white">
+                            {filesWithE2ETests.length} / {sourceFiles.length}
+                          </p>
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    )
+                  })()}
 
-              {/* Generate Test Section for Selected File */}
-              {selectedFile && fileContent && (
-                <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-semibold text-slate-300">Generate Test for: {selectedFile}</h3>
-                    <button
-                      onClick={() => handleGenerateTest(selectedFile, getFileLanguage(selectedFile.split('.').pop() || ''), fileContent)}
-                      disabled={generatingTest === selectedFile}
-                      className="flex items-center space-x-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {generatingTest === selectedFile ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                          <span>Generating...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="h-4 w-4" />
-                          <span>Generate Test</span>
-                        </>
-                      )}
-                    </button>
+                  {/* Files Needing E2E Test Coverage */}
+                  <div className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                    {aiStatus && !aiStatus.openai_available && !aiStatus.anthropic_available && (
+                      <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/50 rounded-lg">
+                        <div className="flex items-center space-x-2">
+                          <AlertTriangle className="h-4 w-4 text-yellow-400" />
+                          <span className="text-sm text-yellow-400">
+                            AI not configured: Generated tests will be templates. Configure API keys for complete test generation.
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-white">Files Needing E2E Tests</h3>
+                      <span className="text-sm text-slate-400">
+                        {(() => {
+                          const e2eTests = tests.filter((t: any) => 
+                            t.test_type === 'e2e' || t.test_type === 'E2E Test'
+                          )
+                          const e2eTestFiles = testFiles.filter(f => {
+                            const name = f.name.toLowerCase()
+                            return name.includes('e2e') || name.includes('integration') || name.includes('end-to-end')
+                          })
+                          return sourceFiles.filter(f => {
+                            const sourceName = f.name.toLowerCase()
+                            const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                            const matchingTestFiles = e2eTestFiles.filter(testFile => {
+                              const testName = testFile.name.toLowerCase()
+                              const testBaseName = testName
+                                .replace(/^test_/, '')
+                                .replace(/_test\./, '.')
+                                .replace(/\.test\./, '.')
+                                .replace(/\.spec\./, '.')
+                                .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                              return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
+                            })
+                            const fileTests = e2eTests.filter((t: any) => {
+                              const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
+                              if (!testAnalysis) return false
+                              const testPath = testAnalysis.file_path?.toLowerCase() || ''
+                              return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
+                            })
+                            return matchingTestFiles.length === 0 && fileTests.length === 0
+                          }).length
+                        })()} files
+                      </span>
+                    </div>
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {(() => {
+                        const e2eTests = tests.filter((t: any) => 
+                          t.test_type === 'e2e' || t.test_type === 'E2E Test'
+                        )
+                        const e2eTestFiles = testFiles.filter(f => {
+                          const name = f.name.toLowerCase()
+                          return name.includes('e2e') || name.includes('integration') || name.includes('end-to-end')
+                        })
+                        return sourceFiles
+                          .filter(f => {
+                            const sourceName = f.name.toLowerCase()
+                            const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                            const matchingTestFiles = e2eTestFiles.filter(testFile => {
+                              const testName = testFile.name.toLowerCase()
+                              const testBaseName = testName
+                                .replace(/^test_/, '')
+                                .replace(/_test\./, '.')
+                                .replace(/\.test\./, '.')
+                                .replace(/\.spec\./, '.')
+                                .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                              return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
+                            })
+                            const fileTests = e2eTests.filter((t: any) => {
+                              const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
+                              if (!testAnalysis) return false
+                              const testPath = testAnalysis.file_path?.toLowerCase() || ''
+                              return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
+                            })
+                            return matchingTestFiles.length === 0 && fileTests.length === 0
+                          })
+                          .slice(0, 20)
+                          .map((file) => {
+                            const fileLanguage = getFileLanguage(file.extension || '')
+                            return (
+                              <div
+                                key={file.path}
+                                className="flex items-center justify-between p-3 bg-slate-800/50 rounded border border-slate-600 hover:border-slate-500 transition-colors"
+                              >
+                                <div className="flex items-center space-x-3 flex-1 min-w-0">
+                                  <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-slate-300 truncate">{file.name}</p>
+                                    <p className="text-xs text-slate-500 truncate">{file.relative_path}</p>
+                                  </div>
+                                  <span className="text-xs px-2 py-1 bg-slate-700 rounded text-slate-400">
+                                    {fileLanguage}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setSelectedTestType('e2e')
+                                    handleGenerateTest(file.relative_path, fileLanguage, undefined, 'e2e')
+                                  }}
+                                  disabled={generatingTest === file.relative_path}
+                                  className="flex items-center space-x-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-4"
+                                >
+                                  {generatingTest === file.relative_path ? (
+                                    <>
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                      <span>Generating...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus className="h-4 w-4" />
+                                      <span>Generate E2E Test</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )
+                          })
+                      })()}
+                      {(() => {
+                        const e2eTests = tests.filter((t: any) => 
+                          t.test_type === 'e2e' || t.test_type === 'E2E Test'
+                        )
+                        const e2eTestFiles = testFiles.filter(f => {
+                          const name = f.name.toLowerCase()
+                          return name.includes('e2e') || name.includes('integration') || name.includes('end-to-end')
+                        })
+                        const needsTests = sourceFiles.filter(f => {
+                          const sourceName = f.name.toLowerCase()
+                          const sourceBaseName = sourceName.replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                          const matchingTestFiles = e2eTestFiles.filter(testFile => {
+                            const testName = testFile.name.toLowerCase()
+                            const testBaseName = testName
+                              .replace(/^test_/, '')
+                              .replace(/_test\./, '.')
+                              .replace(/\.test\./, '.')
+                              .replace(/\.spec\./, '.')
+                              .replace(/\.(py|js|ts|jsx|tsx|java)$/, '')
+                            return testBaseName === sourceBaseName || testName.includes(sourceBaseName)
+                          })
+                          const fileTests = e2eTests.filter((t: any) => {
+                            const testAnalysis = analyses.find((a: any) => a.id === t.analysis_id)
+                            if (!testAnalysis) return false
+                            const testPath = testAnalysis.file_path?.toLowerCase() || ''
+                            return testPath.includes(sourceName) || testPath.includes(sourceBaseName)
+                          })
+                          return matchingTestFiles.length === 0 && fileTests.length === 0
+                        })
+                        return needsTests.length === 0 && (
+                          <div className="text-center py-8">
+                            <CheckCircle className="h-12 w-12 text-green-400 mx-auto mb-2" />
+                            <p className="text-slate-400">All source files have E2E test coverage!</p>
+                          </div>
+                        )
+                      })()}
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-400">
-                    Language: {getFileLanguage(selectedFile.split('.').pop() || '')}
-                  </p>
+
+                  {/* Existing E2E Tests */}
+                  {(() => {
+                    const e2eTests = tests.filter((t: any) => 
+                      t.test_type === 'e2e' || t.test_type === 'E2E Test'
+                    )
+                    return e2eTests.length > 0 && (
+                      <div id="generated-e2e-tests" className="bg-slate-700/50 rounded-lg p-4 border border-slate-600">
+                        <h3 className="text-lg font-semibold text-white mb-4">Generated E2E Tests</h3>
+                        <div className="space-y-4">
+                          {e2eTests.map((test: any) => (
+                            <div
+                              key={test.id}
+                              className="bg-slate-800/50 rounded-lg p-4 border border-slate-600"
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center space-x-2">
+                                  <TestTube className="h-5 w-5 text-purple-400" />
+                                  <span className="text-sm font-semibold">E2E Test</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-sm text-slate-300">
+                                    Coverage: <span className="font-semibold">{test.coverage_percentage?.toFixed(1)}%</span>
+                                  </span>
+                                  <span
+                                    className={`text-xs px-2 py-1 rounded ${
+                                      test.status === 'passed'
+                                        ? 'bg-green-500/20 text-green-400'
+                                        : test.status === 'failed'
+                                        ? 'bg-red-500/20 text-red-400'
+                                        : 'bg-yellow-500/20 text-yellow-400'
+                                    }`}
+                                  >
+                                    {test.status}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between mt-2">
+                                {test.test_code && (
+                                  <details className="flex-1">
+                                    <summary className="cursor-pointer text-sm text-primary-400 hover:text-primary-300">
+                                      View Test Code
+                                    </summary>
+                                    <pre className="mt-2 p-3 bg-slate-900 rounded text-xs overflow-x-auto text-slate-300">
+                                      {test.test_code}
+                                    </pre>
+                                  </details>
+                                )}
+                                <button
+                                  onClick={() => setViewingTest(test)}
+                                  className="ml-2 flex items-center space-x-1 px-3 py-1.5 text-xs bg-primary-600 hover:bg-primary-700 text-white rounded transition-colors"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  <span>View</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
             </div>
@@ -1362,7 +1871,7 @@ export default function RepositoryDetails() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {['all', 'security', 'bug', 'performance', 'style', 'best_practice'].map((type) => {
-                    const filterValue = type === 'all' ? null : type.toUpperCase()
+                    const filterValue = type === 'all' ? null : type
                     const filteredCount = filterValue 
                       ? issues.filter((i: any) => {
                           const issueType = (i.issue_type || '').toLowerCase()
@@ -1375,7 +1884,7 @@ export default function RepositoryDetails() {
                         key={type}
                         onClick={() => setIssueTypeFilter(filterValue)}
                         className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                          issueTypeFilter === filterValue
+                          issueTypeFilter?.toLowerCase() === type
                             ? type === 'security'
                               ? 'bg-red-500/20 text-red-400 border border-red-500/50'
                               : type === 'bug'
@@ -1417,7 +1926,8 @@ export default function RepositoryDetails() {
                   return (
                     <div
                       key={type}
-                      className={`bg-slate-800/50 rounded-lg p-3 border ${
+                      onClick={() => setIssueTypeFilter(type === issueTypeFilter?.toLowerCase() ? null : type)}
+                      className={`bg-slate-800/50 rounded-lg p-3 border cursor-pointer hover:bg-slate-800 transition-colors ${
                         issueTypeFilter?.toLowerCase() === type 
                           ? color === 'red' ? 'border-red-500/50' :
                             color === 'orange' ? 'border-orange-500/50' :
@@ -1456,13 +1966,36 @@ export default function RepositoryDetails() {
               {(() => {
                 const filteredIssues = issueTypeFilter
                   ? issues.filter((i: any) => {
-                      const issueType = (i.issue_type || '').toLowerCase()
-                      const filterType = issueTypeFilter.toLowerCase()
-                      // Map 'best_practice' to 'code improvements' for filtering
-                      if (filterType === 'best_practice' || filterType === 'code improvements') {
-                        return issueType === 'best_practice' || issueType === 'code_improvements'
+                      const issueType = (i.issue_type || '').toLowerCase().trim()
+                      const filterType = issueTypeFilter.toLowerCase().trim()
+                      
+                      // Handle 'all' or null filter
+                      if (!filterType || filterType === 'all') {
+                        return true
                       }
-                      return issueType === filterType
+                      
+                      // Special handling for 'best_practice' - match both 'best_practice' and 'code_improvements'
+                      if (filterType === 'best_practice' || filterType === 'best practice') {
+                        const matches = issueType === 'best_practice' || 
+                                       issueType === 'code_improvements' || 
+                                       issueType === 'code improvements' ||
+                                       issueType === 'bestpractice'
+                        return matches
+                      }
+                      
+                      // Direct match
+                      if (issueType === filterType) {
+                        return true
+                      }
+                      
+                      // Handle case variations and underscores/spaces
+                      const normalizedIssueType = issueType.replace(/[_\s]/g, '')
+                      const normalizedFilterType = filterType.replace(/[_\s]/g, '')
+                      if (normalizedIssueType === normalizedFilterType) {
+                        return true
+                      }
+                      
+                      return false
                     })
                   : issues
                 
@@ -1544,76 +2077,232 @@ export default function RepositoryDetails() {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold">Regression Predictions</h2>
-                <span className="text-sm text-slate-400">
-                  {predictions.length} predictions
-                </span>
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm text-slate-400">
+                    {predictions.length} predictions
+                  </span>
+                  <button
+                    onClick={async () => {
+                      if (!id) {
+                        console.error('No repository ID')
+                        return
+                      }
+                      if (analyzing) {
+                        console.log('Analysis already in progress')
+                        return
+                      }
+                      try {
+                        setAnalyzing(true)
+                        console.log(`Starting predictions review for repository ${id}...`)
+                        setToast({
+                          message: 'Generating predictions...',
+                          type: 'info',
+                          isVisible: true
+                        })
+                        
+                        const requestData = {
+                          generate_tests: false,
+                          predict_regression: true,
+                          trigger_actions: false,
+                          max_files: 50,
+                          ...(selectedModel && { ai_model: selectedModel }),
+                          ...(selectedProvider && { ai_provider: selectedProvider })
+                        }
+                        console.log('Sending predictions review request to:', `/api/v1/review/repository/${id}`, requestData)
+                        
+                        const response = await apiClient.post(`/api/v1/review/repository/${id}`, requestData)
+                        console.log('Predictions review response:', response.data)
+                        
+                        setToast({
+                          message: 'Predictions generated successfully! Refreshing...',
+                          type: 'success',
+                          isVisible: true
+                        })
+                        
+                        // Wait for backend to save prediction
+                        await new Promise(resolve => setTimeout(resolve, 2000))
+                        
+                        // Reload details to get latest prediction
+                        await loadRepositoryDetails()
+                        
+                        setToast({
+                          message: 'Predictions updated!',
+                          type: 'success',
+                          isVisible: true
+                        })
+                      } catch (error: any) {
+                        console.error('Failed to generate predictions:', error)
+                        setToast({
+                          message: `Failed to generate predictions: ${error.response?.data?.detail || error.message || 'Unknown error'}`,
+                          type: 'error',
+                          isVisible: true
+                        })
+                      } finally {
+                        setAnalyzing(false)
+                      }
+                    }}
+                    disabled={analyzing}
+                    className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    <span>{analyzing ? 'Generating...' : 'Review Predictions'}</span>
+                  </button>
+                </div>
               </div>
 
               {predictions.length === 0 ? (
                 <div className="bg-slate-700/50 rounded-lg p-8 border border-slate-600 text-center">
                   <TrendingUp className="h-16 w-16 text-slate-600 mx-auto mb-4" />
-                  <p className="text-slate-400">No predictions yet</p>
+                  <p className="text-slate-400 mb-4">No predictions yet</p>
+                  <button
+                    onClick={async () => {
+                      if (!id) return
+                      if (analyzing) return
+                      try {
+                        setAnalyzing(true)
+                        setToast({
+                          message: 'Generating predictions...',
+                          type: 'info',
+                          isVisible: true
+                        })
+                        
+                        const requestData = {
+                          generate_tests: false,
+                          predict_regression: true,
+                          trigger_actions: false,
+                          max_files: 50,
+                          ...(selectedModel && { ai_model: selectedModel }),
+                          ...(selectedProvider && { ai_provider: selectedProvider })
+                        }
+                        
+                        await apiClient.post(`/api/v1/review/repository/${id}`, requestData)
+                        
+                        await new Promise(resolve => setTimeout(resolve, 2000))
+                        await loadRepositoryDetails()
+                        
+                        setToast({
+                          message: 'Predictions generated!',
+                          type: 'success',
+                          isVisible: true
+                        })
+                      } catch (error: any) {
+                        setToast({
+                          message: `Failed: ${error.response?.data?.detail || error.message}`,
+                          type: 'error',
+                          isVisible: true
+                        })
+                      } finally {
+                        setAnalyzing(false)
+                      }
+                    }}
+                    disabled={analyzing}
+                    className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    {analyzing ? 'Generating...' : 'Generate Predictions'}
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {predictions.map((prediction: any) => (
-                    <div
-                      key={prediction.id}
-                      className="bg-slate-700/50 rounded-lg p-4 border border-slate-600"
-                    >
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <h3 className="text-sm font-semibold text-slate-300 mb-1">
-                            {prediction.file_path || 'Repository-wide'}
-                          </h3>
-                          <p className="text-xs text-slate-400 capitalize">
-                            {prediction.prediction_type} Prediction
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <div className={`text-2xl font-bold mb-1 ${
-                            prediction.risk_score > 0.7
-                              ? 'text-red-400'
-                              : prediction.risk_score > 0.4
-                              ? 'text-yellow-400'
-                              : 'text-green-400'
-                          }`}>
-                            {(prediction.risk_score * 100).toFixed(1)}%
+                  {/* Show only the latest prediction */}
+                  {(() => {
+                    // Sort predictions by created_at descending and get the latest
+                    const sortedPredictions = [...predictions].sort((a: any, b: any) => {
+                      const dateA = new Date(a.created_at).getTime()
+                      const dateB = new Date(b.created_at).getTime()
+                      return dateB - dateA
+                    })
+                    const latestPrediction = sortedPredictions[0]
+                    
+                    return (
+                      <div className="bg-slate-700/50 rounded-lg p-6 border border-slate-600">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs px-2 py-1 bg-primary-600/20 text-primary-400 rounded">
+                              Latest
+                            </span>
+                            <p className="text-xs text-slate-400">
+                              {sortedPredictions.length > 1 && `+${sortedPredictions.length - 1} more`}
+                            </p>
                           </div>
-                          <p className="text-xs text-slate-400">Risk Score</p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <p className="text-xs text-slate-400 mb-1">Confidence</p>
-                          <p className="text-sm font-semibold text-slate-300">
-                            {(prediction.confidence * 100).toFixed(1)}%
+                          <p className="text-xs text-slate-500">
+                            {new Date(latestPrediction.created_at).toLocaleString()}
                           </p>
                         </div>
-                        <div>
-                          <p className="text-xs text-slate-400 mb-1">Status</p>
-                          <p className={`text-sm font-semibold ${
-                            prediction.triggered ? 'text-yellow-400' : 'text-slate-400'
-                          }`}>
-                            {prediction.triggered ? 'Triggered' : 'Pending'}
-                          </p>
+                        
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <h3 className="text-lg font-semibold text-slate-300 mb-1">
+                              {(() => {
+                                if (!latestPrediction.file_path) return 'Repository-wide'
+                                // Extract project name from path (last directory name)
+                                const pathParts = latestPrediction.file_path.split(/[/\\]/)
+                                return pathParts[pathParts.length - 1] || repository?.name || 'Repository'
+                              })()}
+                            </h3>
+                            <p className="text-sm text-slate-400 capitalize">
+                              {latestPrediction.prediction_type} Prediction
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <div className={`text-4xl font-bold mb-1 ${
+                              latestPrediction.risk_score > 0.7
+                                ? 'text-red-400'
+                                : latestPrediction.risk_score > 0.4
+                                ? 'text-yellow-400'
+                                : 'text-green-400'
+                            }`}>
+                              {(latestPrediction.risk_score * 100).toFixed(1)}%
+                            </div>
+                            <p className="text-sm text-slate-400">Risk Score</p>
+                            <p className={`text-xs mt-1 ${
+                              latestPrediction.risk_score > 0.7
+                                ? 'text-red-400'
+                                : latestPrediction.risk_score > 0.4
+                                ? 'text-yellow-400'
+                                : 'text-green-400'
+                            }`}>
+                              {latestPrediction.risk_score > 0.7
+                                ? 'Critical'
+                                : latestPrediction.risk_score > 0.4
+                                ? 'High'
+                                : 'Low'}
+                            </p>
+                          </div>
                         </div>
+                        
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                          <div className="bg-slate-800/50 rounded-lg p-4">
+                            <p className="text-xs text-slate-400 mb-1">Confidence</p>
+                            <p className="text-2xl font-semibold text-slate-300">
+                              {(latestPrediction.confidence * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                          <div className="bg-slate-800/50 rounded-lg p-4">
+                            <p className="text-xs text-slate-400 mb-1">Status</p>
+                            <p className={`text-2xl font-semibold ${
+                              latestPrediction.triggered ? 'text-yellow-400' : 'text-slate-400'
+                            }`}>
+                              {latestPrediction.triggered ? 'Triggered' : 'Pending'}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {latestPrediction.predicted_issues && Array.isArray(latestPrediction.predicted_issues) && latestPrediction.predicted_issues.length > 0 && (
+                          <div className="mt-6 pt-6 border-t border-slate-600">
+                            <p className="text-sm font-semibold text-slate-300 mb-3">Predicted Issues:</p>
+                            <ul className="space-y-2">
+                              {latestPrediction.predicted_issues.map((issue: string, idx: number) => (
+                                <li key={idx} className="text-sm text-slate-300 flex items-start">
+                                  <span className="text-primary-400 mr-2">•</span>
+                                  <span>{issue}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
-                      {prediction.predicted_issues && Array.isArray(prediction.predicted_issues) && prediction.predicted_issues.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-slate-600">
-                          <p className="text-xs font-semibold text-slate-400 mb-2">Predicted Issues:</p>
-                          <ul className="space-y-1">
-                            {prediction.predicted_issues.map((issue: string, idx: number) => (
-                              <li key={idx} className="text-sm text-slate-300">• {issue}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      <p className="text-xs text-slate-500 mt-4">
-                        {new Date(prediction.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  ))}
+                    )
+                  })()}
                 </div>
               )}
             </div>
@@ -1645,6 +2334,94 @@ export default function RepositoryDetails() {
           onRefine={handleRefineTest}
           isRefining={isRefiningTest}
         />
+      )}
+
+      {/* Test Viewer Modal */}
+      {viewingTest && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]" 
+          onClick={() => {
+            console.log('Closing modal')
+            setViewingTest(null)
+          }}
+          style={{ zIndex: 9999 }}
+        >
+          <div 
+            className="bg-slate-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto border border-slate-700" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold text-white">Test Details</h3>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  console.log('Close button clicked')
+                  setViewingTest(null)
+                }}
+                className="text-slate-400 hover:text-white transition-colors"
+                aria-label="Close"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+            {viewingTest.test_code || viewingTest.test_type || viewingTest.file_path ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-slate-400 mb-1">Test Type</p>
+                  <p className="text-white capitalize">{viewingTest.test_type || 'unit'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-slate-400 mb-1">Coverage</p>
+                  <p className={`text-white ${
+                    (viewingTest.coverage_percentage || 0) < 50 ? 'text-red-400' :
+                    (viewingTest.coverage_percentage || 0) < 80 ? 'text-orange-400' :
+                    'text-green-400'
+                  }`}>
+                    {viewingTest.coverage_percentage?.toFixed(1) || 0}%
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-slate-400 mb-1">Status</p>
+                  <span className={`text-xs px-2 py-1 rounded ${
+                    viewingTest.status === 'passed'
+                      ? 'bg-green-500/20 text-green-400'
+                      : viewingTest.status === 'failed'
+                      ? 'bg-red-500/20 text-red-400'
+                      : 'bg-yellow-500/20 text-yellow-400'
+                  }`}>
+                    {viewingTest.status || 'generated'}
+                  </span>
+                </div>
+                {viewingTest.file_path && (
+                  <div>
+                    <p className="text-sm text-slate-400 mb-1">File Path</p>
+                    <p className="text-white text-sm font-mono">{viewingTest.file_path}</p>
+                  </div>
+                )}
+                {viewingTest.test_code ? (
+                  <div>
+                    <p className="text-sm text-slate-400 mb-2">Test Code</p>
+                    <pre className="p-4 bg-slate-900 rounded text-sm overflow-x-auto text-slate-300 font-mono whitespace-pre-wrap">
+                      {viewingTest.test_code}
+                    </pre>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-slate-900/50 rounded border border-slate-700">
+                    <p className="text-slate-400 text-sm">No test code available for this test.</p>
+                    {viewingTest.file_path && (
+                      <p className="text-slate-500 text-xs mt-2">File: {viewingTest.file_path}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <TestTube className="h-12 w-12 text-slate-600 mx-auto mb-4" />
+                <p className="text-slate-400">No test details available</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

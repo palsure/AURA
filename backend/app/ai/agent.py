@@ -5,9 +5,13 @@ Handles code analysis, issue detection, and intelligent suggestions
 
 import ast
 import re
+import logging
+import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 try:
     from openai import OpenAI
@@ -323,20 +327,57 @@ Provide specific, actionable suggestions in a clear format."""
         # Use provided model or fallback to default
         model_to_use = model or settings.OPENAI_MODEL
         
-        response = self.openai_client.chat.completions.create(
-            model=model_to_use,
-            messages=[
-                {"role": "system", "content": "You are an expert code reviewer and security analyst. Analyze code thoroughly and provide specific, actionable feedback."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,  # Lower temperature for more consistent analysis
-            max_tokens=2000
-        )
+        # Log AI request
+        logger.info("=" * 80)
+        logger.info("🤖 AI REQUEST - OpenAI Code Analysis")
+        logger.info(f"   Model: {model_to_use}")
+        logger.info(f"   Language: {language}")
+        logger.info(f"   Code Length: {len(code)} characters")
+        logger.info(f"   Prompt Length: {len(prompt)} characters")
+        logger.info(f"   Temperature: 0.2")
+        logger.info(f"   Max Tokens: 2000")
+        logger.debug(f"   Prompt Preview: {prompt[:200]}...")
+        start_time = time.time()
         
-        ai_text = response.choices[0].message.content
-        
-        # Enhanced parsing of AI response
-        issues.extend(self._parse_ai_response(ai_text, code))
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=model_to_use,
+                messages=[
+                    {"role": "system", "content": "You are an expert code reviewer and security analyst. Analyze code thoroughly and provide specific, actionable feedback."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,  # Lower temperature for more consistent analysis
+                max_tokens=2000
+            )
+            
+            elapsed_time = time.time() - start_time
+            
+            # Log AI response
+            ai_text = response.choices[0].message.content
+            logger.info("✅ AI RESPONSE - OpenAI Code Analysis")
+            logger.info(f"   Response Time: {elapsed_time:.2f}s")
+            logger.info(f"   Response Length: {len(ai_text)} characters")
+            
+            # Log token usage if available
+            if hasattr(response, 'usage'):
+                usage = response.usage
+                logger.info(f"   Tokens - Prompt: {usage.prompt_tokens if hasattr(usage, 'prompt_tokens') else 'N/A'}, "
+                          f"Completion: {usage.completion_tokens if hasattr(usage, 'completion_tokens') else 'N/A'}, "
+                          f"Total: {usage.total_tokens if hasattr(usage, 'total_tokens') else 'N/A'}")
+            
+            logger.debug(f"   Response Preview: {ai_text[:300]}...")
+            logger.info("=" * 80)
+            
+            # Enhanced parsing of AI response
+            issues.extend(self._parse_ai_response(ai_text, code))
+            
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ AI REQUEST FAILED - OpenAI Code Analysis")
+            logger.error(f"   Error: {str(e)}")
+            logger.error(f"   Response Time: {elapsed_time:.2f}s")
+            logger.error("=" * 80)
+            raise
         
         return issues if issues else self._mock_ai_analysis(code, language)
     
@@ -368,20 +409,56 @@ Provide specific, actionable suggestions in a clear format."""
         # Use provided model or fallback to default
         model_to_use = model or settings.ANTHROPIC_MODEL
         
-        message = self.anthropic_client.messages.create(
-            model=model_to_use,
-            max_tokens=2000,
-            temperature=0.2,
-            system="You are an expert code reviewer and security analyst. Analyze code thoroughly and provide specific, actionable feedback.",
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        # Log AI request
+        logger.info("=" * 80)
+        logger.info("🤖 AI REQUEST - Anthropic Claude Code Analysis")
+        logger.info(f"   Model: {model_to_use}")
+        logger.info(f"   Language: {language}")
+        logger.info(f"   Code Length: {len(code)} characters")
+        logger.info(f"   Prompt Length: {len(prompt)} characters")
+        logger.info(f"   Temperature: 0.2")
+        logger.info(f"   Max Tokens: 2000")
+        logger.debug(f"   Prompt Preview: {prompt[:200]}...")
+        start_time = time.time()
         
-        ai_text = message.content[0].text
-        
-        # Enhanced parsing of AI response
-        issues.extend(self._parse_ai_response(ai_text, code))
+        try:
+            message = self.anthropic_client.messages.create(
+                model=model_to_use,
+                max_tokens=2000,
+                temperature=0.2,
+                system="You are an expert code reviewer and security analyst. Analyze code thoroughly and provide specific, actionable feedback.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            elapsed_time = time.time() - start_time
+            
+            # Log AI response
+            ai_text = message.content[0].text
+            logger.info("✅ AI RESPONSE - Anthropic Claude Code Analysis")
+            logger.info(f"   Response Time: {elapsed_time:.2f}s")
+            logger.info(f"   Response Length: {len(ai_text)} characters")
+            
+            # Log token usage if available
+            if hasattr(message, 'usage'):
+                usage = message.usage
+                logger.info(f"   Tokens - Input: {usage.input_tokens if hasattr(usage, 'input_tokens') else 'N/A'}, "
+                          f"Output: {usage.output_tokens if hasattr(usage, 'output_tokens') else 'N/A'}")
+            
+            logger.debug(f"   Response Preview: {ai_text[:300]}...")
+            logger.info("=" * 80)
+            
+            # Enhanced parsing of AI response
+            issues.extend(self._parse_ai_response(ai_text, code))
+            
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ AI REQUEST FAILED - Anthropic Claude Code Analysis")
+            logger.error(f"   Error: {str(e)}")
+            logger.error(f"   Response Time: {elapsed_time:.2f}s")
+            logger.error("=" * 80)
+            raise
         
         return issues if issues else self._mock_ai_analysis(code, language)
     
@@ -548,16 +625,43 @@ Suggestion: {issue.suggestion}
 
 Provide the fixed code with explanation:"""
 
-        response = self.openai_client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are an expert code fixer. Provide clean, correct, production-ready code."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
-        )
+        # Log AI request
+        logger.info("=" * 80)
+        logger.info("🤖 AI REQUEST - OpenAI Fix Suggestion")
+        logger.info(f"   Model: {settings.OPENAI_MODEL}")
+        logger.info(f"   Language: {language}")
+        logger.info(f"   Issue: {issue.message}")
+        logger.info(f"   Line: {issue.line_number}")
+        start_time = time.time()
         
-        return response.choices[0].message.content
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are an expert code fixer. Provide clean, correct, production-ready code."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2
+            )
+            
+            elapsed_time = time.time() - start_time
+            fix_suggestion = response.choices[0].message.content
+            
+            logger.info("✅ AI RESPONSE - OpenAI Fix Suggestion")
+            logger.info(f"   Response Time: {elapsed_time:.2f}s")
+            logger.info(f"   Suggestion Length: {len(fix_suggestion)} characters")
+            logger.debug(f"   Suggestion Preview: {fix_suggestion[:200]}...")
+            logger.info("=" * 80)
+            
+            return fix_suggestion
+            
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ AI REQUEST FAILED - OpenAI Fix Suggestion")
+            logger.error(f"   Error: {str(e)}")
+            logger.error(f"   Response Time: {elapsed_time:.2f}s")
+            logger.error("=" * 80)
+            raise
     
     def _suggest_fix_with_claude(self, code: str, issue: CodeIssue, language: str) -> str:
         """Get fix suggestion using Claude"""
@@ -574,18 +678,42 @@ Suggestion: {issue.suggestion}
 
 Provide the fixed code with explanation:"""
 
-        message = self.anthropic_client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=2000,
-            temperature=0.2,
-            system="You are an expert code fixer. Provide clean, correct, production-ready code.",
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        # Log AI request
+        logger.info("=" * 80)
+        logger.info("🤖 AI REQUEST - Anthropic Claude Fix Suggestion")
+        logger.info(f"   Model: {settings.ANTHROPIC_MODEL}")
+        logger.info(f"   Language: {language}")
+        logger.info(f"   Issue: {issue.message}")
+        logger.info(f"   Line: {issue.line_number}")
+        start_time = time.time()
         
-        return message.content[0].text
-        
-        # Fallback to simple suggestions
-        return f"# Fixed: {issue.suggestion}\n{code}"
+        try:
+            message = self.anthropic_client.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=2000,
+                temperature=0.2,
+                system="You are an expert code fixer. Provide clean, correct, production-ready code.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            elapsed_time = time.time() - start_time
+            fix_suggestion = message.content[0].text
+            
+            logger.info("✅ AI RESPONSE - Anthropic Claude Fix Suggestion")
+            logger.info(f"   Response Time: {elapsed_time:.2f}s")
+            logger.info(f"   Suggestion Length: {len(fix_suggestion)} characters")
+            logger.debug(f"   Suggestion Preview: {fix_suggestion[:200]}...")
+            logger.info("=" * 80)
+            
+            return fix_suggestion
+            
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ AI REQUEST FAILED - Anthropic Claude Fix Suggestion")
+            logger.error(f"   Error: {str(e)}")
+            logger.error(f"   Response Time: {elapsed_time:.2f}s")
+            logger.error("=" * 80)
+            raise
 

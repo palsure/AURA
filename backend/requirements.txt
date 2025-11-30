@@ -19,6 +19,6 @@ astunparse==1.6.3
 pygments==2.17.2
 requests==2.31.0
 redis==5.0.1
-psycopg2-binary==2.9.9
+psycopg[binary]>=3.1.0
 alembic==1.12.1
 

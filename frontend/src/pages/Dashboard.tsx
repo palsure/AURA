@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getDashboardStats, getQualityTrends, DashboardStats } from '../api/client'
-import { TrendingUp, AlertTriangle, CheckCircle, Code, Activity } from 'lucide-react'
+import { TrendingUp, AlertTriangle, CheckCircle, Code, Activity, TestTube, BarChart3 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 
 export default function Dashboard() {
@@ -72,15 +72,24 @@ export default function Dashboard() {
       color: 'text-purple-400',
       bgColor: 'bg-purple-500/10',
     },
+    {
+      title: 'Test Coverage',
+      value: `${stats.average_test_coverage.toFixed(1)}%`,
+      icon: BarChart3,
+      color: 'text-cyan-400',
+      bgColor: 'bg-cyan-500/10',
+    },
+    {
+      title: 'Total Tests',
+      value: stats.total_tests,
+      icon: TestTube,
+      color: 'text-yellow-400',
+      bgColor: 'bg-yellow-500/10',
+    },
   ]
 
   const issuesByTypeData = Object.entries(stats.issues_by_type || {}).map(([type, count]) => ({
     type: type.charAt(0).toUpperCase() + type.slice(1),
-    count,
-  }))
-
-  const issuesBySeverityData = Object.entries(stats.issues_by_severity || {}).map(([severity, count]) => ({
-    severity: severity.charAt(0).toUpperCase() + severity.slice(1),
     count,
   }))
 
@@ -92,7 +101,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {statCards.map((stat) => {
           const Icon = stat.icon
           return (
@@ -170,6 +179,65 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Test Metrics Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Tests by Type */}
+        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h2 className="text-xl font-semibold mb-4">Tests by Type</h2>
+          {stats.tests_by_type && Object.keys(stats.tests_by_type).length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={Object.entries(stats.tests_by_type).map(([type, count]) => ({
+                type: type.charAt(0).toUpperCase() + type.slice(1) || 'Unknown',
+                count
+              }))}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="type" stroke="#94a3b8" />
+                <YAxis stroke="#94a3b8" />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }}
+                />
+                <Bar dataKey="count" fill="#06b6d4" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-64 text-slate-400">
+              No test data available
+            </div>
+          )}
+        </div>
+
+        {/* Test Coverage Overview */}
+        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <h2 className="text-xl font-semibold mb-4">Test Coverage Overview</h2>
+          <div className="space-y-4">
+            <div className="bg-slate-700/50 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-slate-400">Average Coverage</span>
+                <span className="text-2xl font-bold text-cyan-400">
+                  {stats.average_test_coverage.toFixed(1)}%
+                </span>
+              </div>
+              <div className="w-full bg-slate-600 rounded-full h-2 mt-2">
+                <div
+                  className="bg-cyan-400 h-2 rounded-full transition-all"
+                  style={{ width: `${Math.min(stats.average_test_coverage, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-700/50 rounded-lg p-4">
+                <p className="text-sm text-slate-400 mb-1">Total Tests</p>
+                <p className="text-2xl font-bold text-yellow-400">{stats.total_tests}</p>
+              </div>
+              <div className="bg-slate-700/50 rounded-lg p-4">
+                <p className="text-sm text-slate-400 mb-1">Last 7 Days</p>
+                <p className="text-2xl font-bold text-green-400">{stats.tests_created_last_7_days}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Recent Activity */}
       <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
         <div className="flex items-center space-x-2 mb-4">
@@ -180,6 +248,8 @@ export default function Dashboard() {
           <p>• {stats.recent_analyses} analyses performed in the last 7 days</p>
           <p>• {stats.total_repositories} repositories connected</p>
           <p>• {stats.fixed_issues} issues resolved</p>
+          <p>• {stats.tests_created_last_7_days} tests created in the last 7 days</p>
+          <p>• {stats.total_tests} total tests generated</p>
         </div>
       </div>
     </div>
