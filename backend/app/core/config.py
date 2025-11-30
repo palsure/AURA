@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # Application
     DEBUG: bool = True
     ENVIRONMENT: str = "development"  # development, production
+    FRONTEND_URL: str = ""  # Frontend URL for CORS (e.g., https://your-app.onrender.com)
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001"]
     
     @property
@@ -63,6 +64,29 @@ class Settings(BaseSettings):
     # File Storage
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE: int = 10485760  # 10MB
+    
+    @property
+    def cors_origins(self) -> List[str]:
+        """Get CORS origins, including frontend URL if provided"""
+        origins = list(self.CORS_ORIGINS)
+        
+        # Add frontend URL if provided
+        if self.FRONTEND_URL:
+            frontend_url = self.FRONTEND_URL.strip().rstrip('/')
+            if frontend_url not in origins:
+                origins.append(frontend_url)
+            # Also add without trailing slash variations
+            if frontend_url.endswith('/'):
+                origins.append(frontend_url.rstrip('/'))
+            else:
+                origins.append(frontend_url + '/')
+        
+        # In production, if no specific frontend URL is set, allow all origins
+        # This is a fallback - it's better to set FRONTEND_URL explicitly
+        if self.ENVIRONMENT == "production" and not self.FRONTEND_URL:
+            return ["*"]
+        
+        return origins
     
     class Config:
         env_file = ".env"
