@@ -15,24 +15,24 @@
 
 ---
 
-## 🎯 Overview
+## Overview
 
 **AURA** (Autonomous Unified Review Agent) is an autonomous AI engineering assistant that continuously reviews code, generates tests, detects issues, predicts regressions, and triggers automated actions — all with near-zero human intervention. It's not just another code analyzer—it's a complete autonomous QA and productivity system that works 24/7 to ensure code quality and prevent issues before they reach production.
 
 ### Why AURA?
 
-- 🤖 **Fully Autonomous**: Works independently, continuously reviewing and improving code with minimal human intervention
-- 🧪 **Intelligent Test Generation**: Automatically generates comprehensive test suites for your codebase
-- 🔮 **Regression Prediction**: Predicts potential regressions before they happen using ML models
-- ⚡ **Automated Actions**: Triggers automated fixes, deployments, and workflows based on analysis
-- 🚀 **Productivity Multiplier**: Eliminates repetitive QA, testing, and code review tasks
-- 🧠 **Context-Aware Intelligence**: Understands your codebase structure, patterns, and team preferences
-- 🔒 **Security First**: Proactively detects vulnerabilities and automatically applies security patches
-- 📊 **Real-Time Insights**: Live dashboard with actionable recommendations and predictions
+- **Fully Autonomous**: Works independently, continuously reviewing and improving code with minimal human intervention
+- **Intelligent Test Generation**: Automatically generates comprehensive test suites for your codebase
+- **Regression Prediction**: Predicts potential regressions before they happen using ML models
+- **Automated Actions**: Triggers automated fixes, deployments, and workflows based on analysis
+- **Productivity Multiplier**: Eliminates repetitive QA, testing, and code review tasks
+- **Context-Aware Intelligence**: Understands your codebase structure, patterns, and team preferences
+- **Security First**: Proactively detects vulnerabilities and automatically applies security patches
+- **Real-Time Insights**: Live dashboard with actionable recommendations and predictions
 
 ---
 
-## ✨ Features
+## Features
 
 ### Core Capabilities
 
@@ -88,7 +88,7 @@
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -129,7 +129,7 @@
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -190,7 +190,7 @@
 
 ---
 
-## 📖 Usage
+## Usage
 
 ### Basic Workflow
 
@@ -244,7 +244,7 @@ response = requests.post('http://localhost:8000/api/v1/predict', json={
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### Backend
 - **FastAPI**: Modern, fast web framework
@@ -272,7 +272,7 @@ response = requests.post('http://localhost:8000/api/v1/predict', json={
 
 ---
 
-## 📊 Impact & Social Good
+## Impact & Social Good
 
 AURA makes software development more accessible and efficient by:
 
@@ -284,65 +284,39 @@ AURA makes software development more accessible and efficient by:
 
 ---
 
-## 🔮 Future Roadmap
+## Future Roadmap
 
 - [ ] IDE Plugin (VS Code, IntelliJ)
 - [ ] Multi-language support expansion
 - [ ] Team collaboration features
 - [ ] Advanced ML model training
-- [ ] Cloud deployment options
-- [ ] Mobile app for monitoring
-- [ ] Custom action workflows
-- [ ] Integration with more CI/CD platforms
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 👥 Team
+## Team
 
-Built with ❤️ for Galuxium Nexus V1 2025
+Built for Galuxium Nexus V1 2025
+Suresh Kumar Palus
+Partha Samal
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - OpenAI for AI capabilities
 - FastAPI and React communities
 - All open-source contributors
 
 ---
-
-## 🚀 Deployment
-
-Want to host AURA publicly for free? Check out our comprehensive **[Deployment Guide](DEPLOYMENT.md)** which covers:
-
-- **Render** ⭐ (Recommended - Easiest setup with free PostgreSQL)
-- **Railway** (Modern platform with $5/month credit)
-- **Vercel + Railway** (Best performance combination)
-- **Fly.io** (Global edge deployment)
-
-All options include step-by-step instructions, environment variable setup, and production configuration.
-
-**Quick Start**: See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions.
-
----
-
-<div align="center">
-
-**Made for Galuxium Nexus V1 2025** 🚀
-
-[Report Bug](https://github.com/yourusername/aura/issues) • [Request Feature](https://github.com/yourusername/aura/issues) • [Documentation](https://github.com/yourusername/aura/wiki)
-
-</div>
-
